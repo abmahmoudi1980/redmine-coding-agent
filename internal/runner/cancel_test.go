@@ -138,6 +138,35 @@ func TestCancelRequestsCancellationAndCancelsTheAgentContext(t *testing.T) {
 	}
 }
 
+func TestShutdownCancelsActiveRunsAndWaits(t *testing.T) {
+	env := newCancellableRunner(t, domain.StateImplementing, domain.AgentInvokedStage(1))
+
+	signalled := make(chan struct{}, 1)
+	env.runner.trackCancel(env.run.PublicID, func() {
+		select {
+		case signalled <- struct{}{}:
+		default:
+		}
+	})
+
+	if err := env.runner.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	select {
+	case <-signalled:
+	default:
+		t.Fatal("shutdown did not cancel the live pipeline context")
+	}
+
+	latest, err := env.store.GetRun(context.Background(), env.run.ID)
+	if err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	if latest.CancelRequestedAt == nil {
+		t.Fatal("shutdown did not persist a cancel request")
+	}
+}
+
 func TestCancelIsIdempotentAndRefusesTerminalRuns(t *testing.T) {
 	env := newCancellableRunner(t, domain.StateImplementing, domain.AgentInvokedStage(1))
 

@@ -10,5 +10,6 @@ func freeSpace(path string) (uint64, error) {
 	if err := syscall.Statfs(path, &stat); err != nil {
 		return 0, err
 	}
+	// #nosec G115 -- Bavail and Bsize are non-negative filesystem counters; the product is a byte count.
 	return uint64(stat.Bavail) * uint64(stat.Bsize), nil
 }

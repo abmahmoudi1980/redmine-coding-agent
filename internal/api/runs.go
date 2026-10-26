@@ -492,6 +492,13 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	detail := s.buildRunDetail(ctx, run)
+	s.writeJSON(w, http.StatusOK, detail)
+}
+
+// buildRunDetail assembles the full audit view of one run. The HTTP handler and
+// the CLI share it so `runs show --json` cannot drift from `/api/runs/{id}`.
+func (s *Server) buildRunDetail(ctx context.Context, run *domain.Run) runDetailDocument {
 	detail := runDetailDocument{
 		runDocument: s.runDocumentFor(ctx, run),
 		Invocations: []invocationDocument{},
@@ -560,8 +567,31 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	return detail
+}
 
-	s.writeJSON(w, http.StatusOK, detail)
+// RunDocumentFor renders one run exactly as GET /api/runs/{id} does.
+func (s *Server) RunDocumentFor(ctx context.Context, run *domain.Run) any {
+	return s.runDocumentFor(ctx, run)
+}
+
+// RunDetailFor renders the full audit document the API returns.
+func (s *Server) RunDetailFor(ctx context.Context, run *domain.Run) any {
+	return s.buildRunDetail(ctx, run)
+}
+
+// RunPageFor renders a history page exactly as GET /api/runs does.
+func (s *Server) RunPageFor(ctx context.Context, runs []domain.Run, next string) any {
+	items := make([]runDocument, 0, len(runs))
+	for index := range runs {
+		items = append(items, s.runDocumentFor(ctx, &runs[index]))
+	}
+	page := runPageDocument{Items: items}
+	if next != "" {
+		cursor := next
+		page.NextCursor = &cursor
+	}
+	return page
 }
 
 func (s *Server) runDocumentFor(ctx context.Context, run *domain.Run) runDocument {

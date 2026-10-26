@@ -85,7 +85,10 @@ func (s *Server) handleStreamRunEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			flusher.Flush()
-		case event := <-subscription.C:
+		case event, ok := <-subscription.C:
+			if !ok {
+				return
+			}
 			if event.Seq <= lastSent {
 				continue
 			}
@@ -185,6 +188,12 @@ func ssePayload(event domain.RunEvent) ([]byte, error) {
 		}
 	}
 	return json.Marshal(payload)
+}
+
+// EventPayload exposes the SSE data document so `run --format json` can emit
+// the same event shapes as the browser stream (contracts/cli.md §Machine output).
+func EventPayload(event domain.RunEvent) ([]byte, error) {
+	return ssePayload(event)
 }
 
 // terminalStateIn reads the state a `state` event reported, if it is terminal.

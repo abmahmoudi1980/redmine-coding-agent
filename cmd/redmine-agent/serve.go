@@ -5,24 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 	"time"
 
-	"github.com/systemgroup/redmine-coding-agent/internal/agent"
 	"github.com/systemgroup/redmine-coding-agent/internal/api"
-	"github.com/systemgroup/redmine-coding-agent/internal/config"
-	"github.com/systemgroup/redmine-coding-agent/internal/git"
-	"github.com/systemgroup/redmine-coding-agent/internal/gitlab"
-	"github.com/systemgroup/redmine-coding-agent/internal/health"
-	"github.com/systemgroup/redmine-coding-agent/internal/logging"
-	"github.com/systemgroup/redmine-coding-agent/internal/redmine"
-	"github.com/systemgroup/redmine-coding-agent/internal/runner"
-	"github.com/systemgroup/redmine-coding-agent/internal/store"
-	"github.com/systemgroup/redmine-coding-agent/internal/validate"
 )
 
 // runServe is the long-running worker. Startup order matters: configured
@@ -31,134 +21,89 @@ import (
 // traffic (FR-051, FR-056).
 func runServe(args []string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	configPath := flags.String("config", "", "path to config.yaml (defaults to $"+config.EnvConfigPath+" or config.yaml)")
+	flags.SetOutput(os.Stderr)
+	globals := registerGlobalFlags(flags)
+	listen := flags.String("listen", "", "override http.listen from the configuration")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return exitWith(exitUsage, "serve: %v", err)
 	}
-
-	cfg, err := config.Load(*configPath)
+	if len(flags.Args()) > 0 {
+		return exitWith(exitUsage, "serve: unexpected argument %q", flags.Args()[0])
+	}
+	level, err := parseLogLevel(globals.logLevel)
 	if err != nil {
-		return err
-	}
-
-	redactor := logging.NewRedactor()
-	logger := logging.New(logging.Options{LogDir: cfg.Data.LogDir, Redactor: redactor})
-	if err := registerSecrets(cfg, redactor); err != nil {
-		return err
+		return exitWith(exitUsage, "serve: %v", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	st, err := store.Open(ctx, cfg.Data.Database, store.WithRedactor(redactor))
+	worker, err := newApp(ctx, appOptions{
+		configPath: globals.configPath,
+		stderr:     os.Stderr,
+		logLevel:   level,
+		seed:       true,
+		recover:    true,
+		withRunner: true,
+		withHealth: true,
+	})
 	if err != nil {
 		return err
 	}
+	closed := false
 	defer func() {
-		if err := st.Close(); err != nil {
-			logger.Base().Error("store close failed", "error", err)
+		if closed {
+			return
+		}
+		if closeErr := worker.close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "redmine-agent: close worker: %v\n", closeErr)
 		}
 	}()
 
-	seeded, err := st.SeedConfiguration(ctx, cfg)
-	if err != nil {
-		return fmt.Errorf("seed repositories from configuration: %w", err)
+	address := worker.config.HTTP.Listen
+	if *listen != "" {
+		address = *listen
 	}
-	if len(seeded.Deactivated) > 0 {
-		logger.Base().Warn("repository mappings removed from configuration were deactivated",
-			"repositories", seeded.Deactivated)
-	}
-
-	redmineClient, err := redmine.New(redmine.Options{
-		BaseURL:  cfg.Redmine.BaseURL,
-		APIKey:   cfg.Redmine.APIKey,
-		Redactor: redactor,
-		Logger:   logger.Base(),
-	})
-	if err != nil {
-		return err
-	}
-	gitlabClient, err := gitlab.New(gitlab.Options{
-		BaseURL:  cfg.GitLab.BaseURL,
-		Token:    cfg.GitLab.Token,
-		Redactor: redactor,
-		Logger:   logger.Base(),
-	})
-	if err != nil {
-		return err
-	}
-
-	registry := agent.NewRegistry()
-	adapter, err := agent.NewOpenCode(agent.Config{
-		Command:       cfg.Agent.Command,
-		Model:         cfg.Agent.Model,
-		AgentName:     cfg.Agent.Profile,
-		WorkspaceRoot: cfg.Data.WorkspaceRoot,
-		Redactor:      redactor,
-	})
-	if err != nil {
-		return err
-	}
-	if err := registry.Register(adapter); err != nil {
-		return err
+	logger := worker.logger
+	// The startup banner is structured on purpose: an operator can grep one
+	// line for the version, the port, and the limits this process is running
+	// with, and the redaction writer is already on the sink (T137).
+	logger.Base().Info("redmine-agent starting",
+		"version", version,
+		"commit", commit,
+		"built_at", builtAt,
+		"listen", address,
+		"schema_version", worker.config.SchemaVersion,
+		"database", worker.config.Data.Database,
+		"workspace_root", worker.config.Data.WorkspaceRoot,
+		"log_dir", worker.config.Data.LogDir,
+		"max_active_runs", worker.config.Concurrency.MaxActiveRuns,
+		"agent", worker.config.Agent.Adapter,
+		"os", buildInfo(worker.config).OS,
+		"arch", buildInfo(worker.config).Arch,
+	)
+	if host, _, splitErr := net.SplitHostPort(address); splitErr == nil {
+		if ip := net.ParseIP(host); host != "" && (ip == nil || !ip.IsLoopback()) {
+			logger.Base().Warn("the listener is not bound to loopback; there is no per-user login in v1",
+				"listen", address)
+		}
 	}
 
-	gitManager := git.NewManager("", cfg.Data.WorkspaceRoot)
-	if token, tokenErr := cfg.GitLab.Token.Resolve(); tokenErr == nil && token != "" {
-		gitManager.SetHTTPAuth("oauth2", token)
-	}
-
-	healthChecker := health.New(health.Deps{
-		Store:    st,
-		Config:   cfg,
-		Redmine:  redmineClient,
-		GitLab:   gitlabClient,
-		Git:      gitManager,
-		Adapters: registry,
-		Redactor: redactor,
-	})
-
-	pipeline, err := runner.New(runner.Options{
-		Config:    cfg,
-		Store:     st,
-		Git:       gitManager,
-		Adapters:  registry,
-		Redmine:   redmineClient,
-		GitLab:    gitlabClient,
-		Logger:    logger,
-		Validator: validate.New(validate.Options{Redactor: redactor}),
-	})
-	if err != nil {
-		return err
-	}
-
-	if report, err := pipeline.RecoverInterrupted(ctx); err != nil {
-		return err
-	} else if len(report.Interrupted) > 0 {
-		logger.Base().Warn("interrupted runs recovered before serving",
-			"count", len(report.Interrupted))
-	}
-
+	hub := api.NewHub()
 	handler := api.NewServer(api.Deps{
-		Config:   cfg,
-		Store:    st,
+		Config:   worker.config,
+		Store:    worker.store,
 		Logger:   logger,
-		Redactor: redactor,
-		Redmine:  redmineClient,
-		Runs:     pipeline,
-		Health:   healthChecker,
-		Build: api.BuildInfo{
-			Version:       version,
-			Commit:        commit,
-			BuiltAt:       builtAt,
-			OS:            runtime.GOOS,
-			Arch:          runtime.GOARCH,
-			SchemaVersion: cfg.SchemaVersion,
-		},
+		Redactor: worker.redactor,
+		Redmine:  worker.redmine,
+		Runs:     worker.runner,
+		Hub:      hub,
+		Health:   worker.health,
+		Build:    buildInfo(worker.config),
 	}).Handler()
 
 	server := &http.Server{
-		Addr:              cfg.HTTP.Listen,
+		Addr:              address,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -173,37 +118,31 @@ func runServe(args []string) error {
 			return err
 		}
 	case <-ctx.Done():
-		logger.Base().Info("shutdown requested", "listen", cfg.HTTP.Listen)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		logger.Base().Info("shutdown requested: draining the run pipeline", "listen", address)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			logger.Base().Warn("http shutdown did not finish", "error", err)
+
+		// Stop accepting new connections first (Shutdown closes the listeners
+		// before it waits), then cancel the in-flight run through its process
+		// group/Job Object, then end event streams, then checkpoint the WAL.
+		serverDone := make(chan struct{})
+		go func() {
+			defer close(serverDone)
+			if err := server.Shutdown(shutdownCtx); err != nil {
+				logger.Base().Warn("http shutdown did not finish", "error", err)
+			}
+		}()
+		if err := worker.runner.Shutdown(shutdownCtx); err != nil {
+			logger.Base().Warn("the active run did not settle before the deadline", "error", err)
 		}
+		hub.Close()
+		<-serverDone
 	}
 
-	pipeline.Wait()
-	return nil
-}
-
-// registerSecrets resolves every configured credential once and registers its
-// value with the redactor, so a later log, report, prompt, or response can
-// never carry it (FR-056, SC-013).
-func registerSecrets(cfg *config.Config, redactor *logging.Redactor) error {
-	if redactor == nil {
-		return nil
+	if err := worker.close(); err != nil {
+		logger.Base().Error("store close failed", "error", err)
 	}
-	for name, reference := range map[string]config.SecretRef{
-		"redmine.api_key": cfg.Redmine.APIKey,
-		"gitlab.token":    cfg.GitLab.Token,
-	} {
-		if !reference.IsSet() {
-			continue
-		}
-		value, err := reference.Resolve()
-		if err != nil {
-			return fmt.Errorf("%s: %w", name, err)
-		}
-		redactor.Register(value)
-	}
+	closed = true
+	logger.Base().Info("redmine-agent stopped cleanly", "version", version)
 	return nil
 }

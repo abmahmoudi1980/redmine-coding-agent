@@ -97,6 +97,33 @@ func WritePolicy(layout SandboxLayout, policy Policy) (string, error) {
 	return path, nil
 }
 
+// UnprotectSandbox restores write permission on the sandbox tree after the
+// agent invocation has ended, so retention and run-directory cleanup can remove
+// it. The policy is read-only only while the agent is running.
+func UnprotectSandbox(sandboxDir string) error {
+	if strings.TrimSpace(sandboxDir) == "" {
+		return nil
+	}
+	root, err := filepath.Abs(sandboxDir)
+	if err != nil {
+		return err
+	}
+	if _, statErr := os.Stat(root); errors.Is(statErr, os.ErrNotExist) {
+		return nil
+	}
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			// #nosec G302 G122 -- a directory needs execute (and, for cleanup, write) for its owner.
+			return os.Chmod(path, 0o700)
+		}
+		// #nosec G122 -- the walk starts at a worker-created sandbox; this only restores ownership.
+		return os.Chmod(path, 0o600)
+	})
+}
+
 // baseEnvironment names the only inherited variables that are safe to pass
 // through. Everything else, including credentials, is dropped (A3, FR-056).
 var baseEnvironment = []string{

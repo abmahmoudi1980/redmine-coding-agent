@@ -111,3 +111,20 @@ func (h *Hub) Subscribers(runID int64) int {
 	defer h.mu.Unlock()
 	return len(h.runs[runID])
 }
+
+// Close ends every live subscription so graceful shutdown does not wait for
+// browsers to disconnect. It is only called after the pipeline has settled, so
+// no Publish can race the channel close.
+func (h *Hub) Close() {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for runID, subscribers := range h.runs {
+		for listener := range subscribers {
+			close(listener.events)
+		}
+		delete(h.runs, runID)
+	}
+}

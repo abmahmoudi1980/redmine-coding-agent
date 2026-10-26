@@ -1,0 +1,66 @@
+[Unit]
+Description=RedmineCodingAgent — verified issue implementation worker
+Documentation=https://github.com/systemgroup/redmine-coding-agent/blob/main/specs/010-redmine-coding-agent/quickstart.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# R9 deployment hardening: a dedicated, unprivileged account whose filesystem
+# access is limited to the data root and the workspace root. The agent the
+# worker spawns inherits this account, so it can never reach production shares.
+User=redmine-agent
+Group=redmine-agent
+SupplementaryGroups=
+WorkingDirectory=/var/lib/redmine-agent
+Environment=REDMINE_AGENT_CONFIG=/etc/redmine-agent/config.yaml
+# Secrets come from env:NAME or file:/path references only. Keep the env file
+# root:redmine-agent 0640 and never commit it.
+EnvironmentFile=-/etc/redmine-agent/redmine-agent.env
+ExecStart=/usr/local/bin/redmine-agent serve --config /etc/redmine-agent/config.yaml
+Restart=on-failure
+RestartSec=5s
+# SIGTERM triggers the documented graceful path: stop accepting runs, cancel
+# the active one through its process group, drain streams, checkpoint WAL.
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=45
+
+# Kernel-level hardening on top of the agent's own policy layer.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/redmine-agent /var/log/redmine-agent
+
+StateDirectory=redmine-agent
+LogsDirectory=redmine-agent
+RuntimeDirectory=redmine-agent
+
+[Install]
+WantedBy=multi-user.target
+
+# Install (Debian/Ubuntu, systemd 247+):
+#   useradd --system --home /var/lib/redmine-agent --shell /usr/sbin/nologin redmine-agent
+#   install -d -o redmine-agent -g redmine-agent -m 0750 \
+#     /var/lib/redmine-agent /var/log/redmine-agent /var/lib/redmine-agent/data/workspaces
+#   install -d -o root -g redmine-agent -m 0750 /etc/redmine-agent
+#   install -o root -g redmine-agent -m 0640 config.yaml /etc/redmine-agent/config.yaml
+#   install -o root -g redmine-agent -m 0640 redmine-agent.env /etc/redmine-agent/redmine-agent.env
+#   install -m 0644 deploy/systemd/redmine-agent.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now redmine-agent
+#
+# ACL expectation: the account may write only /var/lib/redmine-agent (database,
+# workspace root, mirrors) and /var/log/redmine-agent. It must not be able to
+# read another user's home, mounted production shares, or /etc/redmine-agent
+# files other than the two installed above.

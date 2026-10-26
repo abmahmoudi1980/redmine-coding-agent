@@ -180,3 +180,51 @@ func TestSlowCommandsMatchTheHost(t *testing.T) {
 		t.Fatal("unix slow command is wrong")
 	}
 }
+
+// TestCommandSelectionFollowsTheConfiguredOS proves the Windows/Linux command
+// pair is chosen from the runner's OS, not from the host the test runs on (T140).
+func TestCommandSelectionFollowsTheConfiguredOS(t *testing.T) {
+	check := domain.CheckDefinition{
+		Name:           "selected",
+		CommandLinux:   "echo linux",
+		CommandWindows: "echo windows",
+		Required:       true,
+	}
+	for _, testCase := range []struct {
+		goos string
+		want string
+	}{
+		{"linux", "echo linux"},
+		{"windows", "echo windows"},
+	} {
+		result := validate.New(validate.Options{Goos: testCase.goos}).RunCheck(context.Background(), check, "")
+		if result.Command != testCase.want {
+			t.Fatalf("goos %s: command = %q, want %q", testCase.goos, result.Command, testCase.want)
+		}
+		if result.Outcome != domain.OutcomeNotExecuted || result.Reason != "no_workspace" {
+			t.Fatalf("goos %s: outcome = %s/%s", testCase.goos, result.Outcome, result.Reason)
+		}
+	}
+}
+
+// TestRunCheckInAPathWithSpacesAndUnicode executes a real command from a
+// workspace whose path would break naive shell quoting.
+func TestRunCheckInAPathWithSpacesAndUnicode(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "space dir", "کارگاه")
+	if err := os.MkdirAll(workspace, 0o750); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	command := "echo ok"
+	if runtime.GOOS == "windows" {
+		command = "echo ok"
+	}
+	result := validate.New(validate.Options{}).RunCheck(context.Background(), domain.CheckDefinition{
+		Name:           "path",
+		CommandLinux:   command,
+		CommandWindows: command,
+		Required:       true,
+	}, workspace)
+	if result.Outcome != domain.OutcomePassed {
+		t.Fatalf("outcome = %s (%s), excerpt = %q", result.Outcome, result.Reason, result.OutputExcerpt)
+	}
+}

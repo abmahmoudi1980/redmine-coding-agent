@@ -709,6 +709,32 @@ func (s *Store) ActiveRunCount(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// ListActiveRuns returns every non-terminal run, newest first. Graceful
+// shutdown uses it to cancel exactly the work this process owns (T136).
+func (s *Store) ListActiveRuns(ctx context.Context) ([]domain.Run, error) {
+	// #nosec G202 -- only the constant select and generated placeholders are concatenated.
+	query := runSelect + ` WHERE r.state IN (` + activeStatePlaceholders() + `) ORDER BY r.created_at DESC`
+	args := make([]any, 0, len(domain.ActiveRunStates))
+	for _, state := range domain.ActiveRunStates {
+		args = append(args, string(state))
+	}
+	rows, err := s.read.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: list active runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []domain.Run
+	for rows.Next() {
+		run, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, *run)
+	}
+	return runs, rows.Err()
+}
+
 func activeStatePlaceholders() string {
 	return strings.TrimSuffix(strings.Repeat("?,", len(domain.ActiveRunStates)), ",")
 }

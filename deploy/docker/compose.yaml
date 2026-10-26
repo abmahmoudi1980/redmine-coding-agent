@@ -1,0 +1,50 @@
+# R9 deployment hardening: run the worker in a container on Linux.
+#
+#   docker compose -f deploy/docker/compose.yaml up --build
+#
+# The image is distroless and runs as the non-root `nonroot` user (uid 65532).
+# The configuration must use env: or file: references; mount secrets read-only
+# at /run/secrets and point the references at them.
+services:
+  redmine-agent:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: redmine-coding-agent:local
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./config.yaml:/etc/redmine-agent/config.yaml:ro
+      - redmine-agent-data:/data
+      # Prefer secrets as files: ownership 65532:65532, mode 0400.
+      - ./secrets:/run/secrets:ro
+    environment:
+      REDMINE_AGENT_CONFIG: /etc/redmine-agent/config.yaml
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/redmine-agent", "version", "--json"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  redmine-agent-data:
+
+# Notes
+# - `data.workspace_root`, `data.database`, and `data.log_dir` in config.yaml
+#   must live under /data so they survive a container restart.
+# - The agent CLI (e.g. opencode) must be installed in a derived image; the
+#   stock image contains only the worker. Keep its credentials inside the
+#   /data volume or a read-only secret mount, never in the image layer.
+# - The container boundary is the strongest containment available in v1. The
+#   worker still applies its own policy file, sandboxed HOME/TMP, and
+#   post-hoc escape detection inside it.

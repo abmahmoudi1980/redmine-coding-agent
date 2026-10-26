@@ -150,6 +150,7 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: resolve %s: %w", path, err)
 	}
+	// #nosec G703 -- the path is the operator-supplied --config (or the documented default).
 	f, err := os.Open(abs)
 	if err != nil {
 		return nil, fmt.Errorf("config: open %s: %w", abs, err)

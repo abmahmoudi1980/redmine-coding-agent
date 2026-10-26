@@ -10,19 +10,23 @@ One Go binary (no CGO), Svelte SPA embedded, SQLite for history, identical behav
 
 ## Status
 
-Phases 1–5 of the plan are implemented. The pipeline is complete and proven end to end by the test suite; the long-running HTTP server and the operator CLI are still to come (Phase 9).
+All six user stories and the polish phase are implemented. The HTTP API, the
+SSE stream, the operator CLI, restart recovery, configuration/health admin, and
+the embedded SPA are one binary.
 
 | Capability | State |
 |---|---|
 | Issue preview, repository resolution, no side effects (US1) | **Implemented** |
 | Isolated worktree, agent invocation, independent verification, repair loop, commit (US2) | **Implemented** |
 | Push, merge-request create/reuse, run report, Redmine comment (US3) | **Implemented** |
-| Live progress (SSE) and cancel API (US4) | Not yet — endpoints answer `501` |
-| Run history, retry, restart recovery (US5) | Not yet |
-| Config/health admin API, `doctor` (US6) | Partial — `/api/health` is a liveness check only |
-| `serve` wiring, `run`/`runs`/`prune` CLI, graceful shutdown (Polish) | Pending — `serve` prints a stub |
+| Live progress (SSE) and cancel API (US4) | **Implemented** |
+| Run history, retry, restart recovery (US5) | **Implemented** |
+| Config/health admin API, `doctor` (US6) | **Implemented** |
+| `serve`, `run`/`runs`/`cancel`/`retry`/`prune`, graceful shutdown (Polish) | **Implemented** |
 
-> **Consequence:** you cannot drive the product from a browser yet, because nothing serves the SPA. Every implemented behaviour is nevertheless proven end to end by `go test`, against `httptest` fakes for Redmine and GitLab, a real SQLite database, a real git mirror + worktree, and a controllable fake agent. That suite is the way to test the app today — see [Testing](#testing).
+> **What it does not do:** it never merges a merge request, never writes to a
+> base branch, and never force-pushes. There is no flag to do any of those, and
+> the GitLab client has no merge method at all.
 
 ---
 
@@ -111,15 +115,53 @@ If a build asks for `gcc`, a CGO-dependent package slipped in: that breaks the p
 
 ---
 
-## Running
+## Five-minute setup
 
 ```bash
-go run ./cmd/redmine-agent version     # build version
-go run ./cmd/redmine-agent help        # usage
-go run ./cmd/redmine-agent serve       # currently prints a stub banner
+# 1. build (frontend first)
+make build
+
+# 2. configure
+cp config.example.yaml config.yaml          # then fill in the mappings
+export REDMINE_API_KEY=... GITLAB_TOKEN=...
+
+# 3. prove the dependencies before touching an issue
+./bin/redmine-agent doctor --config config.yaml --all
+
+# 4. run the worker
+./bin/redmine-agent serve --config config.yaml
+#    open http://127.0.0.1:8080
 ```
 
-The API surface that is already implemented (behind the `serve` wiring) matches `specs/010-redmine-coding-agent/contracts/openapi.yaml`: preview, repository list, create run, run detail, checks, report, liveness.
+The operator path is `doctor` → preview → confirm → `run` view. The same path
+is available headlessly:
+
+```bash
+redmine-agent run --issue 4821 --yes                 # preview, start, follow to the end
+redmine-agent run --issue 4821 --repository 3 --yes --wait=false
+redmine-agent runs list --state failed
+redmine-agent runs show <run-id>
+redmine-agent runs checks <run-id>
+redmine-agent runs logs <run-id> --tail 200
+redmine-agent runs report <run-id>
+redmine-agent cancel <run-id> --wait
+redmine-agent retry <run-id> --yes
+redmine-agent prune --older-than 30d --dry-run
+redmine-agent version --json
+```
+
+Exit codes mirror the terminal state (`0` completed, `4` dependency
+unreachable, `5` validation failed, `6` run failed, `7` blocked, `8` cancelled,
+`9` interrupted), and `--json` emits exactly one document per line. The full
+flag and exit-code contract is `specs/010-redmine-coding-agent/contracts/cli.md`.
+`--wait=false` hands the run to a running `serve` (it cannot outlive this
+process); the command exits `4` with a clear message when no worker answers.
+
+`serve` handles `SIGINT`/`SIGTERM` (Ctrl+C, `systemctl stop`, `sc stop`) by
+stopping new runs, cancelling the active one through its process group/Job
+Object, draining event streams, and checkpointing the SQLite WAL before exit 0.
+Deployment recipes live in `deploy/systemd/`, `deploy/windows/`, and
+`deploy/docker/`.
 
 ---
 
@@ -184,6 +226,15 @@ Each test drives the public HTTP surface, a real pipeline, real git, and a real 
 | `TestRejectedPushKeepsTheCommitAndFails` | `push_rejected`, commit preserved, workspace marked unpushed |
 | `TestFailedCommentKeepsTheReportBody` | Redmine failure never rolls back the work |
 | `TestMergeRequestFailureKeepsThePushAndFails` | push survives an MR failure |
+| `TestPublishReusesAnExistingMergeRequest` | idempotent MR reuse on retry |
+| `TestCancelKillsTheProcessTreeAndPushesNothing` | cancellation within 30 s (SC-009) |
+| `TestRecoveryMarksInterruptedAndRetryLinksLineage` | restart recovery and retry lineage (SC-007) |
+| `TestCLIRunExitCodesFollowTerminalState` | real binary: `0/5/6/7` match the terminal state, one JSON doc per line |
+| `TestCLIRunRequiresYesAndStartsNothing` | `--yes` is required before any run row or agent process |
+| `TestCLIVersionJSON` | `version --json` carries build identity and schema version |
+| `TestSecretScanFindsNoFixtureValue` | zero secret matches in DB, logs, transcripts, prompts, reports, responses (SC-013) |
+| `TestPruneDeletesOldRunsButNeverTheirBranches` | retention removes rows/worktrees, keeps branches and MRs (FR-053/054) |
+| `TestPruneKeepsRunsWithUnpushedChanges` | retention refuses a workspace with unpushed work |
 
 Run one scenario and watch it:
 
@@ -227,18 +278,29 @@ CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -o NUL        ./cmd/redmine-age
 
 Four successes with no C toolchain is the portability gate. CI (`.github/workflows/ci.yml`) runs this plus the full suite on `ubuntu-latest` and `windows-latest`.
 
-### 7. What you cannot test yet
+### 7. What the suite deliberately does not cover
 
-- Browsing the SPA against a live worker (`serve` is a stub).
-- Cancelling a run, watching SSE progress, retrying, listing history, `doctor`, and the headless `run`/`runs`/`prune` commands.
-- Anything against a real Redmine/GitLab. The fakes are the substitute until the server is wired.
+- **A real Redmine, GitLab, or coding agent.** The fakes are deterministic
+  substitutes; use `redmine-agent doctor --all` and
+  `specs/010-redmine-coding-agent/quickstart.md` Scenarios A–C against the real
+  services before a release.
+- **A real coding agent's output schema.** `opencode --format json` is not a
+  published contract; unknown shapes are skipped and the transcript, exit code,
+  and validation results still decide the outcome.
+- **The residual containment risk in R9.** A malicious agent running with the
+  service account's rights is a deployment concern; the container/systemd/ACL
+  recipes in `deploy/` are the mitigation. See `SECURITY.md`.
+
+Performance and containment baselines are recorded in
+`tests/fixtures/perf-baseline.md`; the full release validation log is
+`specs/010-redmine-coding-agent/validation-log.md`.
 
 ---
 
 ## Project layout
 
 ```text
-cmd/redmine-agent/          CLI entrypoint (serve, version, help)
+cmd/redmine-agent/          CLI entrypoint (serve, run, runs, cancel, retry, prune, doctor, version)
 internal/
   agent/                    adapter boundary, prompt fencing, sandbox, opencode, summary
   api/                      router, middleware, handlers, contract tests
@@ -284,7 +346,7 @@ Containment of the agent is layered (denied operations, sandboxed `HOME`/`TMPDIR
 | `npm run e2e` cannot launch a browser | `npx --prefix web playwright install chromium` |
 | `svelte-check` complains about `.svelte-kit` types | `npm --prefix web run check` runs `svelte-kit sync` first; run it from `web/` if invoked directly |
 | Build asks for `gcc` | a CGO dependency slipped in: fix the dependency, do not set `CGO_ENABLED=1` |
-| `serve` prints “stub listener not implemented yet” | expected; the server wiring is Phase 9 |
+| `serve` exits 3 at startup | run `redmine-agent doctor --config config.yaml`; the log line names the failing key or secret reference |
 
 ---
 
@@ -296,3 +358,6 @@ Containment of the agent is layered (denied operations, sandboxed `HOME`/`TMPDIR
 - `specs/010-redmine-coding-agent/contracts/` — HTTP + SSE, CLI, and agent-adapter contracts
 - `specs/010-redmine-coding-agent/quickstart.md` — operator validation scenarios
 - `specs/010-redmine-coding-agent/tasks.md` — task breakdown and current progress
+- `SECURITY.md` — redaction coverage, containment model, residual risk
+- `specs/010-redmine-coding-agent/validation-log.md` — release validation record
+- `deploy/` — systemd, Windows service, and Docker deployment recipes

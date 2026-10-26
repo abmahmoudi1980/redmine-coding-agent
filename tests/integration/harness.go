@@ -198,6 +198,21 @@ func (h *Harness) FakeAgent() string {
 	return out
 }
 
+// SaveConfig writes the current configuration (including any change FakeAgent
+// made) to disk for a child process such as the CLI under test.
+func (h *Harness) SaveConfig(t testing.TB) string {
+	t.Helper()
+	encoded, err := yaml.Marshal(h.Config)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	path := filepath.Join(h.Root, "config-cli.yaml")
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
+}
+
 func sourceDir() string {
 	_, file, _, _ := runtime.Caller(0)
 	return filepath.Dir(file)

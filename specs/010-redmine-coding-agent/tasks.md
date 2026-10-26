@@ -59,57 +59,57 @@ Single Go module at the repository root, with the SPA in `web/`:
 
 ### Configuration, secrets, redaction
 
-- [ ] T013 Implement strict config decoding in `internal/config/config.go`: typed structs for every `config.example.yaml` key, `yaml.Decoder` with `KnownFields(true)`, `schema_version` check, and a `$REDMINE_AGENT_CONFIG` fallback path
-- [ ] T014 [P] Implement secret indirection in `internal/config/secrets.go`: resolve `env:NAME` and `file:/path` lazily, return a typed `SecretRef` that can never be formatted into a string (`String()` returns the reference name only)
-- [ ] T015 [P] Implement `internal/config/validate.go`: required sections, non-empty `base_branch`, unique `(redmine_project, repository_path)`, at most one `is_default` per project, positive timeouts, `max_active_runs >= 1`, and an agent command that `exec.LookPath` can find
-- [ ] T016 Implement the redaction registry in `internal/logging/redact.go`: register resolved secret values, provide `Redact(string) string` and a wrapping `io.Writer` that scrubs on write; cover JSON, quoted, and URL-encoded forms
-- [ ] T017 Write `internal/config/config_test.go` and `internal/logging/redact_test.go`: unknown-key rejection, unresolved-reference error naming the reference only, and a test proving a registered secret never survives `%v`, `slog`, or writer output (FR-056, SC-013)
+- [X] T013 Implement strict config decoding in `internal/config/config.go`: typed structs for every `config.example.yaml` key, `yaml.Decoder` with `KnownFields(true)`, `schema_version` check, and a `$REDMINE_AGENT_CONFIG` fallback path
+- [X] T014 [P] Implement secret indirection in `internal/config/secrets.go`: resolve `env:NAME` and `file:/path` lazily, return a typed `SecretRef` that can never be formatted into a string (`String()` returns the reference name only)
+- [X] T015 [P] Implement `internal/config/validate.go`: required sections, non-empty `base_branch`, unique `(redmine_project, repository_path)`, at most one `is_default` per project, positive timeouts, `max_active_runs >= 1`, and an agent command that `exec.LookPath` can find
+- [X] T016 Implement the redaction registry in `internal/logging/redact.go`: register resolved secret values, provide `Redact(string) string` and a wrapping `io.Writer` that scrubs on write; cover JSON, quoted, and URL-encoded forms
+- [X] T017 Write `internal/config/config_test.go` and `internal/logging/redact_test.go`: unknown-key rejection, unresolved-reference error naming the reference only, and a test proving a registered secret never survives `%v`, `slog`, or writer output (FR-056, SC-013)
 
 ### Logging
 
-- [ ] T018 Implement `internal/logging/logger.go`: `slog` JSON handler on stderr, per-run file handler at `<log_dir>/<run_id>.log`, a `WithRun(runID, stage)` helper, and the redaction writer applied to both sinks
-- [ ] T019 Write `internal/logging/logger_test.go`: run-scoped fields present on every record, log file created and rotated per run, redacted values absent from file and stderr
+- [X] T018 Implement `internal/logging/logger.go`: `slog` JSON handler on stderr, per-run file handler at `<log_dir>/<run_id>.log`, a `WithRun(runID, stage)` helper, and the redaction writer applied to both sinks
+- [X] T019 Write `internal/logging/logger_test.go`: run-scoped fields present on every record, log file created and rotated per run, redacted values absent from file and stderr
 
 ### Domain model and state machine
 
-- [ ] T020 Implement `internal/domain/run.go`: `Run`, `Workspace`, `IssueSnapshot`, `AgentInvocation`, `ValidationResult`, `Report` structs mirroring `data-model.md` §4–§8, with `RunState`, `Stage`, and `Outcome` string enums
-- [ ] T021 Implement `internal/domain/state.go`: the transition table from `data-model.md` §9, `CanTransition(from, to)`, `IsTerminal(state)`, an `ErrInvalidTransition` error carrying both states, and the rule that `interrupted` is settable only through `MarkInterrupted`
-- [ ] T022 [P] Implement `internal/domain/errors.go`: `FailureCode` constants for every row of `data-model.md` §10, a `Failure{Code, Message, Stage, Remediation}` type, and mapping helpers from upstream errors to `connectivity_*`, `push_rejected`, and `merge_request_failed`
-- [ ] T023 Write `internal/domain/state_test.go`: every allowed edge accepted, every other edge rejected, no terminal state exits, `cancelled` requires a cancel request, and `validating → completed` allowed only when publishing is disabled
+- [X] T020 Implement `internal/domain/run.go`: `Run`, `Workspace`, `IssueSnapshot`, `AgentInvocation`, `ValidationResult`, `Report` structs mirroring `data-model.md` §4–§8, with `RunState`, `Stage`, and `Outcome` string enums
+- [X] T021 Implement `internal/domain/state.go`: the transition table from `data-model.md` §9, `CanTransition(from, to)`, `IsTerminal(state)`, an `ErrInvalidTransition` error carrying both states, and the rule that `interrupted` is settable only through `MarkInterrupted`
+- [X] T022 [P] Implement `internal/domain/errors.go`: `FailureCode` constants for every row of `data-model.md` §10, a `Failure{Code, Message, Stage, Remediation}` type, and mapping helpers from upstream errors to `connectivity_*`, `push_rejected`, and `merge_request_failed`
+- [X] T023 Write `internal/domain/state_test.go`: every allowed edge accepted, every other edge rejected, no terminal state exits, `cancelled` requires a cancel request, and `validating → completed` allowed only when publishing is disabled
 
 ### Storage
 
-- [ ] T024 Implement `internal/store/store.go`: open `modernc.org/sqlite` at `data.database`, apply `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=on`, `synchronous=NORMAL` on every connection, one writer connection plus a read pool, and a `Close` that checkpoints WAL
-- [ ] T025 Implement `internal/store/migrate.go` plus `internal/store/migrations/0001_init.sql` creating all tables, indexes, partial unique indexes, and `CHECK` constraints from `data-model.md` §2–§8 (including `ux_runs_active_issue` and `CHECK (outcome <> 'passed' OR exit_code = 0)`), applied in a transaction and recorded in `schema_migrations`
-- [ ] T026 [P] Implement `internal/store/runs.go`: create/read/update run, state+stage transition written in the same transaction as its `run_events` row, active-run lookup by issue, active-run count, and cursor-paginated listing
-- [ ] T027 [P] Implement `internal/store/events.go`: append with per-run `seq` allocation inside the caller's transaction, replay-after-seq, latest-N, and the redaction guard on `message`/`data`
-- [ ] T028 [P] Implement `internal/store/checks.go` and `internal/store/reports.go`: invocation insert/finish, validation-result insert (one row per check per attempt), check-attempt grouping, report upsert by `run_id` with `dedupe_key`, and configuration-profile insert/get-by-hash
-- [ ] T029 Write `internal/store/store_test.go`: partial unique index rejects a second active run for the same issue, `CHECK` rejects `passed` with a non-zero exit code or a missing exit code, terminal runs cannot be updated, event `seq` is monotonic under concurrent appends, and a reopen preserves all history
+- [X] T024 Implement `internal/store/store.go`: open `modernc.org/sqlite` at `data.database`, apply `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=on`, `synchronous=NORMAL` on every connection, one writer connection plus a read pool, and a `Close` that checkpoints WAL
+- [X] T025 Implement `internal/store/migrate.go` plus `internal/store/migrations/0001_init.sql` creating all tables, indexes, partial unique indexes, and `CHECK` constraints from `data-model.md` §2–§8 (including `ux_runs_active_issue` and `CHECK (outcome <> 'passed' OR exit_code = 0)`), applied in a transaction and recorded in `schema_migrations`
+- [X] T026 [P] Implement `internal/store/runs.go`: create/read/update run, state+stage transition written in the same transaction as its `run_events` row, active-run lookup by issue, active-run count, and cursor-paginated listing
+- [X] T027 [P] Implement `internal/store/events.go`: append with per-run `seq` allocation inside the caller's transaction, replay-after-seq, latest-N, and the redaction guard on `message`/`data`
+- [X] T028 [P] Implement `internal/store/checks.go` and `internal/store/reports.go`: invocation insert/finish, validation-result insert (one row per check per attempt), check-attempt grouping, report upsert by `run_id` with `dedupe_key`, and configuration-profile insert/get-by-hash
+- [X] T029 Write `internal/store/store_test.go`: partial unique index rejects a second active run for the same issue, `CHECK` rejects `passed` with a non-zero exit code or a missing exit code, terminal runs cannot be updated, event `seq` is monotonic under concurrent appends, and a reopen preserves all history
 
 ### HTTP plumbing
 
-- [ ] T030 Implement `internal/api/router.go`: stdlib `net/http` routes for every path in `contracts/openapi.yaml`, plus a middleware chain of panic recovery → request id → structured access log → redaction → handler, bound to `http.listen`
-- [ ] T031 [P] Implement `internal/api/errors.go`: `Problem` writer emitting `application/problem+json` with `type`, `title`, `status`, `code`, `detail`, optional `stage`/`candidates`/`activeRun`, and a `domain.Failure` → HTTP status mapper (400/404/409/429/502)
-- [ ] T032 [P] Implement `internal/api/static.go`: serve `internal/web/dist` with immutable cache headers for hashed assets and an SPA fallback to `index.html` for non-`/api` paths
-- [ ] T033 Implement `internal/api/contract_test.go`: a table test asserting every documented route exists with the documented method and that unknown routes return a problem+json 404 (guards drift from `contracts/openapi.yaml`)
+- [X] T030 Implement `internal/api/router.go`: stdlib `net/http` routes for every path in `contracts/openapi.yaml`, plus a middleware chain of panic recovery → request id → structured access log → redaction → handler, bound to `http.listen`
+- [X] T031 [P] Implement `internal/api/errors.go`: `Problem` writer emitting `application/problem+json` with `type`, `title`, `status`, `code`, `detail`, optional `stage`/`candidates`/`activeRun`, and a `domain.Failure` → HTTP status mapper (400/404/409/429/502)
+- [X] T032 [P] Implement `internal/api/static.go`: serve `internal/web/dist` with immutable cache headers for hashed assets and an SPA fallback to `index.html` for non-`/api` paths
+- [X] T033 Implement `internal/api/contract_test.go`: a table test asserting every documented route exists with the documented method and that unknown routes return a problem+json 404 (guards drift from `contracts/openapi.yaml`)
 
 ### Process containment
 
-- [ ] T034 Implement `internal/proc/proc.go` and `internal/proc/proc_unix.go`: start a child with `Setpgid`, stream stdout/stderr to supplied writers, and on `ctx` cancellation send `SIGTERM` then `SIGKILL` to `-pgid` after a grace period
-- [ ] T035 Implement `internal/proc/proc_windows.go`: create a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, assign the child immediately, and call `TerminateJobObject` on cancellation with a `taskkill /T /F /PID` fallback
-- [ ] T036 Write `internal/proc/proc_test.go` behind a `testing.Short()` guard: a helper child that spawns a grandchild, cancellation kills both on the current OS, and the returned exit state distinguishes cancelled from exited
+- [X] T034 Implement `internal/proc/proc.go` and `internal/proc/proc_unix.go`: start a child with `Setpgid`, stream stdout/stderr to supplied writers, and on `ctx` cancellation send `SIGTERM` then `SIGKILL` to `-pgid` after a grace period
+- [X] T035 Implement `internal/proc/proc_windows.go`: create a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, assign the child immediately, and call `TerminateJobObject` on cancellation with a `taskkill /T /F /PID` fallback
+- [X] T036 Write `internal/proc/proc_test.go` behind a `testing.Short()` guard: a helper child that spawns a grandchild, cancellation kills both on the current OS, and the returned exit state distinguishes cancelled from exited
 
 ### Git operations
 
-- [ ] T037 Implement `internal/git/repo.go`: ensure/refresh a bare mirror under `<workspace_root>/../repos/<repository_id>.git`, `worktree add -b <branch> <workspace> <base_branch>`, `rev-parse HEAD`, `status --porcelain`, `diff --name-status`, `add -A`, `commit`, and `push origin <branch>` — with **no** merge, rebase, or force-push function anywhere in the package (FR-041)
-- [ ] T038 [P] Implement `internal/git/lock.go` and `internal/git/paths.go`: per-repository mutex keyed by `repository_id`, workspace path layout `<workspace_root>/<run_id>/`, and a guard that refuses a workspace path outside the configured root
-- [ ] T039 Write `internal/git/repo_test.go`: create a bare origin in `t.TempDir()`, mirror it, add two worktrees concurrently, assert branch isolation and that the origin tip is unchanged; assert `dirty` detection refuses cleanup when unpushed changes exist
+- [X] T037 Implement `internal/git/repo.go`: ensure/refresh a bare mirror under `<workspace_root>/../repos/<repository_id>.git`, `worktree add -b <branch> <workspace> <base_branch>`, `rev-parse HEAD`, `status --porcelain`, `diff --name-status`, `add -A`, `commit`, and `push origin <branch>` — with **no** merge, rebase, or force-push function anywhere in the package (FR-041)
+- [X] T038 [P] Implement `internal/git/lock.go` and `internal/git/paths.go`: per-repository mutex keyed by `repository_id`, workspace path layout `<workspace_root>/<run_id>/`, and a guard that refuses a workspace path outside the configured root
+- [X] T039 Write `internal/git/repo_test.go`: create a bare origin in `t.TempDir()`, mirror it, add two worktrees concurrently, assert branch isolation and that the origin tip is unchanged; assert `dirty` detection refuses cleanup when unpushed changes exist
 
 ### Agent boundary and test harness
 
-- [ ] T040 Implement `internal/agent/adapter.go` from `contracts/agent-adapter.md` §1–§3: `Adapter` interface, `Request`/`Result`/`Prompt`/`Summary`/`ActivityEvent` types, a name-keyed registry, and validation of A1–A3 preconditions (existing workspace inside the root, sandbox dirs created)
-- [ ] T041 Implement the integration harness in `tests/integration/harness.go`: `httptest` fakes for Redmine (`/issues/:id.json` with journals/attachments, note posting) and GitLab (`/projects/:id`, branches, merge requests), a temp bare origin, a real SQLite store, and a config builder pointing at the fakes
-- [ ] T042 Implement `tests/integration/fakeagent/main.go`: a controllable fake agent with modes `ok`, `no-changes`, `lies`, `blocked`, `crash`, `hang`, `escape-path`, `grandchild`, emitting the JSONL shape and the `## RESULT` block from `contracts/agent-adapter.md` §5–§6
+- [X] T040 Implement `internal/agent/adapter.go` from `contracts/agent-adapter.md` §1–§3: `Adapter` interface, `Request`/`Result`/`Prompt`/`Summary`/`ActivityEvent` types, a name-keyed registry, and validation of A1–A3 preconditions (existing workspace inside the root, sandbox dirs created)
+- [X] T041 Implement the integration harness in `tests/integration/harness.go`: `httptest` fakes for Redmine (`/issues/:id.json` with journals/attachments, note posting) and GitLab (`/projects/:id`, branches, merge requests), a temp bare origin, a real SQLite store, and a config builder pointing at the fakes
+- [X] T042 Implement `tests/integration/fakeagent/main.go`: a controllable fake agent with modes `ok`, `no-changes`, `lies`, `blocked`, `crash`, `hang`, `escape-path`, `grandchild`, emitting the JSONL shape and the `## RESULT` block from `contracts/agent-adapter.md` §5–§6
 
 **Checkpoint**: Foundation ready — every subsequent story plugs into storage, states, git, containment, and the fakes.
 
@@ -304,19 +304,19 @@ Single Go module at the repository root, with the SPA in `web/`:
 
 **Purpose**: Operator ergonomics, retention, documentation, and the cross-platform proof.
 
-- [ ] T132 Implement the headless `run` command in `cmd/redmine-agent/run.go`: `--issue`, `--repository`, `--yes`, `--wait`, `--format json`, terminal-state exit codes `4`–`9` per `contracts/cli.md`
-- [ ] T133 [P] Implement `cmd/redmine-agent/runs.go` (`list|show|checks|logs|report`), `cmd/redmine-agent/action.go` (`cancel|retry`), and `cmd/redmine-agent/version.go` with `--json` output matching the API documents
-- [ ] T134 Implement retention in `cmd/redmine-agent/prune.go` and `internal/runner/cleanup.go`: delete run directories and rows older than `--older-than`, refuse while `has_unpushed_changes = 1`, report skips, and never delete pushed branches or MRs (FR-053, FR-054)
-- [ ] T135 [P] Write `tests/integration/cli_test.go`: exit codes map to terminal states, `--json` emits one document per line, and `--yes` is required before any agent process starts
-- [ ] T136 Implement graceful shutdown in `cmd/redmine-agent/serve.go`: `SIGINT`/`SIGTERM` stops accepting runs, cancels the active run through `internal/proc`, drains the hub, checkpoints WAL, exits `0`
-- [ ] T137 [P] Add structured startup banner logging in `cmd/redmine-agent/serve.go` (version, listen address, schema version, workspace root, active-run limit) with the redaction writer applied
-- [ ] T138 [P] Write `README.md`: what it does and does not do (never merges), the five-minute setup, the `doctor` → preview → run path, and links to `quickstart.md`
-- [ ] T139 [P] Add deployment recipes in `deploy/`: `systemd/redmine-agent.service`, `windows/install-service.ps1` (`sc.exe create`), and `docker/compose.yaml`, each documenting the service-account and ACL expectations from R9
-- [ ] T140 Cross-platform hardening: verify workspace paths with spaces and non-ASCII characters on both OSes, confirm `command_windows`/`command_linux` selection, and add regression tests in `internal/git/paths_test.go` and `internal/validate/runner_test.go`
-- [ ] T141 [P] Performance pass: assert preview p95 ≤ 3 s against the fake Redmine (SC-001 budget), SPA first paint < 1 s from embedded assets, and binary size ≤ 40 MB stripped; record numbers in `tests/fixtures/perf-baseline.md`
-- [ ] T142 [P] Security review pass: audit every log/report/prompt/response write path for redaction coverage, confirm the agent policy file is read-only, and document the residual containment risk in `SECURITY.md`
-- [ ] T143 Run the full `quickstart.md` validation (Scenarios A–C plus the SC map) on Windows and Linux and record results in `specs/010-redmine-coding-agent/validation-log.md`
-- [ ] T144 Final quality gate: `go vet`, `golangci-lint`, `go test -race ./...` on Linux, `go test ./...` on Windows, `npm run check`, `npm test`, Playwright suite, and the four-target cross-compile — all green
+- [X] T132 Implement the headless `run` command in `cmd/redmine-agent/run.go`: `--issue`, `--repository`, `--yes`, `--wait`, `--format json`, terminal-state exit codes `4`–`9` per `contracts/cli.md`
+- [X] T133 [P] Implement `cmd/redmine-agent/runs.go` (`list|show|checks|logs|report`), `cmd/redmine-agent/action.go` (`cancel|retry`), and `cmd/redmine-agent/version.go` with `--json` output matching the API documents
+- [X] T134 Implement retention in `cmd/redmine-agent/prune.go` and `internal/runner/cleanup.go`: delete run directories and rows older than `--older-than`, refuse while `has_unpushed_changes = 1`, report skips, and never delete pushed branches or MRs (FR-053, FR-054)
+- [X] T135 [P] Write `tests/integration/cli_test.go`: exit codes map to terminal states, `--json` emits one document per line, and `--yes` is required before any agent process starts
+- [X] T136 Implement graceful shutdown in `cmd/redmine-agent/serve.go`: `SIGINT`/`SIGTERM` stops accepting runs, cancels the active run through `internal/proc`, drains the hub, checkpoints WAL, exits `0`
+- [X] T137 [P] Add structured startup banner logging in `cmd/redmine-agent/serve.go` (version, listen address, schema version, workspace root, active-run limit) with the redaction writer applied
+- [X] T138 [P] Write `README.md`: what it does and does not do (never merges), the five-minute setup, the `doctor` → preview → run path, and links to `quickstart.md`
+- [X] T139 [P] Add deployment recipes in `deploy/`: `systemd/redmine-agent.service`, `windows/install-service.ps1` (`sc.exe create`), and `docker/compose.yaml`, each documenting the service-account and ACL expectations from R9
+- [X] T140 Cross-platform hardening: verify workspace paths with spaces and non-ASCII characters on both OSes, confirm `command_windows`/`command_linux` selection, and add regression tests in `internal/git/paths_test.go` and `internal/validate/runner_test.go`
+- [X] T141 [P] Performance pass: assert preview p95 ≤ 3 s against the fake Redmine (SC-001 budget), SPA first paint < 1 s from embedded assets, and binary size ≤ 40 MB stripped; record numbers in `tests/fixtures/perf-baseline.md`
+- [X] T142 [P] Security review pass: audit every log/report/prompt/response write path for redaction coverage, confirm the agent policy file is read-only, and document the residual containment risk in `SECURITY.md`
+- [X] T143 Run the full `quickstart.md` validation (Scenarios A–C plus the SC map) on Windows and Linux and record results in `specs/010-redmine-coding-agent/validation-log.md`
+- [X] T144 Final quality gate: `go vet`, `golangci-lint`, `go test -race ./...` on Linux, `go test ./...` on Windows, `npm run check`, `npm test`, Playwright suite, and the four-target cross-compile — all green
 
 ---
 

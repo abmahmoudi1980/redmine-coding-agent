@@ -136,6 +136,9 @@ func (r *Runner) invoke(ctx context.Context, run *domain.Run, snapshot domain.Is
 		EnvAllowlist: environment,
 		PolicyFile:   policyPath,
 	})
+	// The policy is read-only while the agent runs; restore ownership of the
+	// sandbox afterwards so retention can delete the run directory (T134).
+	_ = agent.UnprotectSandbox(sandboxDir)
 
 	finish := invocationFinish(result, runErr)
 	r.finishInvocation(ctx, invocation, finish.Status, finish.ExitCode, finish.TimedOut, finish.ReportedStatus, finish.ResultSummary)

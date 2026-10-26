@@ -82,6 +82,8 @@ func runDoctor(args []string) error {
 	deep := flags.Bool("deep", false, "also fetch each mapped repository")
 	all := flags.Bool("all", false, "run every check instead of stopping at the first failure")
 	jsonOut := flags.Bool("json", false, "machine-readable output on stdout")
+	_ = flags.String("log-level", "info", "accepted for CLI compatibility; doctor prints its report regardless")
+	_ = flags.Bool("no-color", false, "disable ANSI styling")
 	if err := flags.Parse(args); err != nil {
 		return exitWith(exitUsage, "doctor: %v", err)
 	}
