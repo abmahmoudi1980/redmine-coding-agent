@@ -112,14 +112,19 @@ func newApp(ctx context.Context, opts appOptions) (*app, error) {
 	}
 	assembled.redmine = redmineClient
 
-	gitlabClient, err := gitlab.New(gitlab.Options{
-		BaseURL:  cfg.GitLab.BaseURL,
-		Token:    cfg.GitLab.Token,
-		Redactor: redactor,
-		Logger:   logger.Base(),
-	})
-	if err != nil {
-		return nil, &exitError{code: exitConfig, err: err}
+	// GitLab is optional: an all-local deployment runs without it, and the
+	// pipeline never contacts a GitLab server for a local repository path.
+	var gitlabClient *gitlab.Client
+	if strings.TrimSpace(cfg.GitLab.BaseURL) != "" {
+		gitlabClient, err = gitlab.New(gitlab.Options{
+			BaseURL:  cfg.GitLab.BaseURL,
+			Token:    cfg.GitLab.Token,
+			Redactor: redactor,
+			Logger:   logger.Base(),
+		})
+		if err != nil {
+			return nil, &exitError{code: exitConfig, err: err}
+		}
 	}
 	assembled.gitlab = gitlabClient
 

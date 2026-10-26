@@ -100,6 +100,8 @@ concurrency:
 
 Secrets are **never** literal values in this file: `env:NAME` reads an environment variable, `file:/path` reads a mounted secret. On Windows use `file:` with an ACL-restricted file rather than user-wide environment variables where possible.
 
+**Without GitLab.** Make `repository_path` an absolute directory (e.g. `/srv/repos/billing`, or `C:\repos\billing`) and omit the `gitlab` section. The pipeline skips `connectivity.gitlab`, clones from the directory, verifies, and commits; with `push_enabled: true` it pushes only `agent/issue-<id>` into that local repository. No merge request is opened, and the report states that the repository is a local path. A GitLab project path stays relative (`group/project`), which is how the two modes are told apart.
+
 **Expected**: `redmine-agent doctor --config config.yaml` exits `0`, printing one `ok` line per check. A deliberately wrong token must exit `4` and name the reference (`redmine.api_key`), never the value.
 
 ---

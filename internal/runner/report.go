@@ -29,9 +29,10 @@ type reportInput struct {
 	MergeRequestURL string
 	// MergeRequestSkipped distinguishes "disabled by policy" from a plain
 	// absence, so the report never implies a failure (FR-042).
-	MergeRequestSkipped bool
-	Duration            time.Duration
-	RenderedAt          time.Time
+	MergeRequestSkipped       bool
+	MergeRequestSkippedReason string
+	Duration                  time.Duration
+	RenderedAt                time.Time
 }
 
 // dedupeKey is stable for one outcome and changes when the commit or merge
@@ -234,6 +235,9 @@ func mergeRequestLabel(input reportInput) string {
 	if strings.TrimSpace(input.MergeRequestURL) != "" {
 		return input.MergeRequestURL
 	}
+	if strings.TrimSpace(input.MergeRequestSkippedReason) != "" {
+		return "not created (" + input.MergeRequestSkippedReason + ")"
+	}
 	if input.MergeRequestSkipped {
 		return "not created (merge requests are disabled for this repository)"
 	}
@@ -295,17 +299,18 @@ func (r *Runner) persistReport(ctx context.Context, run *domain.Run, snapshot do
 	}
 
 	body := renderReport(reportInput{
-		Run:                 run,
-		Snapshot:            &snapshot,
-		Workspace:           workspace,
-		Checks:              checks,
-		Invocations:         invocations,
-		Terminal:            terminal,
-		Failure:             failure,
-		MergeRequestURL:     result.MergeRequestURL,
-		MergeRequestSkipped: result.MergeRequestSkipped,
-		Duration:            duration,
-		RenderedAt:          renderedAt,
+		Run:                       run,
+		Snapshot:                  &snapshot,
+		Workspace:                 workspace,
+		Checks:                    checks,
+		Invocations:               invocations,
+		Terminal:                  terminal,
+		Failure:                   failure,
+		MergeRequestURL:           result.MergeRequestURL,
+		MergeRequestSkipped:       result.MergeRequestSkipped,
+		MergeRequestSkippedReason: result.MergeRequestSkippedReason,
+		Duration:                  duration,
+		RenderedAt:                renderedAt,
 	})
 
 	report := &domain.Report{

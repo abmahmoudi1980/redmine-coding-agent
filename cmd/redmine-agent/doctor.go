@@ -197,13 +197,16 @@ func doctor(opts doctorOptions) error {
 			Remediation: "Fix redmine.base_url."})
 		return finishDoctor(opts, report, exitDependency)
 	}
-	gitlabClient, err := gitlab.New(gitlab.Options{
-		BaseURL: cfg.GitLab.BaseURL, Token: cfg.GitLab.Token, Redactor: redactor,
-	})
-	if err != nil {
-		record(health.Component{Name: "gitlab", Status: health.StatusFailing, Detail: err.Error(),
-			Remediation: "Fix gitlab.base_url."})
-		return finishDoctor(opts, report, exitDependency)
+	var gitlabClient *gitlab.Client
+	if strings.TrimSpace(cfg.GitLab.BaseURL) != "" {
+		gitlabClient, err = gitlab.New(gitlab.Options{
+			BaseURL: cfg.GitLab.BaseURL, Token: cfg.GitLab.Token, Redactor: redactor,
+		})
+		if err != nil {
+			record(health.Component{Name: "gitlab", Status: health.StatusFailing, Detail: err.Error(),
+				Remediation: "Fix gitlab.base_url."})
+			return finishDoctor(opts, report, exitDependency)
+		}
 	}
 
 	manager := git.NewManager("", cfg.Data.WorkspaceRoot)
@@ -297,13 +300,19 @@ func checkSecretReferences(cfg *config.Config) health.Component {
 	references := []struct {
 		name      string
 		reference config.SecretRef
+		optional  bool
 	}{
-		{"redmine.api_key", cfg.Redmine.APIKey},
-		{"gitlab.token", cfg.GitLab.Token},
+		{"redmine.api_key", cfg.Redmine.APIKey, false},
+		// GitLab is optional for an all-local deployment; validation already
+		// guarantees a reference whenever a repository is a GitLab project.
+		{"gitlab.token", cfg.GitLab.Token, true},
 	}
 	var resolved []string
 	for _, item := range references {
 		if !item.reference.IsSet() {
+			if item.optional {
+				continue
+			}
 			component.Status = health.StatusFailing
 			component.Detail = item.name + " has no reference"
 			component.LatencyMS = time.Since(started).Milliseconds()

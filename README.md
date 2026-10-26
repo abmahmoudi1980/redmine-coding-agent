@@ -104,14 +104,36 @@ If a build asks for `gcc`, a CGO-dependent package slipped in: that breaks the p
 | `data.database` / `data.workspace_root` / `data.log_dir` | SQLite file, worktree root, per-run log directory |
 | `data.retention_days` | how long workspaces are kept |
 | `redmine.base_url`, `redmine.api_key` | issue reads; `comment_on_finish` gates the report comment |
-| `gitlab.base_url`, `gitlab.token` | project lookup and merge requests |
+| `gitlab.base_url`, `gitlab.token` | project lookup and merge requests; optional when every repository is a local path |
 | `gitlab.push_enabled` / `gitlab.merge_request_enabled` | global publishing policy |
-| `repositories[]` | `redmine_project` → `repository_path`, `base_branch`, `is_default`, optional `publish_enabled` / `merge_request_enabled`, and `checks[]` |
+| `repositories[]` | `redmine_project` → `repository_path`, `base_branch`, `is_default`, optional `publish_enabled` / `merge_request_enabled`, and `checks[]`; `repository_path` is a GitLab project path **or** an absolute local directory |
 | `repositories[].checks[]` | `name`, `command_linux`, `command_windows`, `required` (default true), `timeout_seconds` |
 | `agent` | `adapter`, `model`, `profile`, `timeout_minutes`, `max_repairs` |
 | `concurrency.max_active_runs` | one active run by default |
 
 **Secrets are never literal values.** Use `env:NAME` or `file:/path`; they are resolved at use time, never logged, and scrubbed from every log line, transcript, report, and response by a redaction registry.
+
+### Run without GitLab
+
+Point `repository_path` at an absolute local directory and omit the `gitlab`
+section: the worker skips the GitLab connectivity stage entirely, clones from
+that path, verifies, and commits exactly as before. With `push_enabled: true`
+it pushes only the dedicated `agent/issue-<id>` branch back into the local
+repository; the base branch is never written. Merge requests cannot exist
+without GitLab, so they are always skipped and the report says why.
+
+```yaml
+gitlab:
+  push_enabled: true            # push the branch into the local repository
+repositories:
+  - redmine_project: "79"
+    repository_path: "/srv/repos/semnin"   # absolute => local, no GitLab
+    base_branch: "main"
+    checks: [...]
+```
+
+Local versus remote is decided by the path alone — a GitLab project path is
+relative by construction, a local repository path is absolute.
 
 ---
 

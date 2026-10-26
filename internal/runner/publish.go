@@ -19,6 +19,9 @@ type publishResult struct {
 	Pushed              bool
 	MergeRequestURL     string
 	MergeRequestSkipped bool
+	// MergeRequestSkippedReason distinguishes a policy choice from a local
+	// repository that has no merge-request endpoint at all.
+	MergeRequestSkippedReason string
 }
 
 // publishAndReport is the tail of every validated run: push the dedicated
@@ -99,7 +102,7 @@ func (r *Runner) publishSteps(ctx context.Context, run *domain.Run, mapping doma
 	workspace.HasUnpushedChanges = false
 	_ = r.stage(ctx, run, domain.StageBranchPushed, domain.RunEvent{
 		Type:    domain.EventPublish,
-		Message: fmt.Sprintf("branch %s pushed to origin", run.Branch),
+		Message: fmt.Sprintf("branch %s pushed to %s", run.Branch, r.remoteLabel(mapping)),
 	}, log)
 
 	// US4-AC4: once the operator cancels, no further publishing step starts.
@@ -114,9 +117,13 @@ func (r *Runner) publishSteps(ctx context.Context, run *domain.Run, mapping doma
 
 	if !r.mergeRequestEnabled(mapping) {
 		result.MergeRequestSkipped = true
+		result.MergeRequestSkippedReason = "merge requests are disabled for this repository"
+		if mapping.IsLocal() {
+			result.MergeRequestSkippedReason = "the repository is a local path, so no merge request can be opened"
+		}
 		r.event(ctx, run, domain.RunEvent{
 			Type:    domain.EventPublish,
-			Message: "merge request creation is disabled for this repository; the branch is pushed and the run continues",
+			Message: "no merge request was opened: " + result.MergeRequestSkippedReason,
 		})
 		return result, nil, false
 	}
@@ -150,12 +157,22 @@ func (r *Runner) pushBranch(ctx context.Context, run *domain.Run, workspace *dom
 	return r.git.Push(ctx, workspace.Path, run.Branch)
 }
 
-// mergeRequestEnabled resolves the global and per-repository policy (FR-042).
+// mergeRequestEnabled resolves the global and per-repository policy (FR-042). A
+// local repository has no merge-request endpoint, so it is never enabled.
 func (r *Runner) mergeRequestEnabled(mapping domain.RepositoryMapping) bool {
-	if r.config == nil || r.gitlab == nil {
+	if r.config == nil || r.gitlab == nil || mapping.IsLocal() {
 		return false
 	}
 	return mapping.MergeRequestEnabled && r.config.GitLab.MergeRequestEnabled
+}
+
+// remoteLabel names the place a pushed branch went, so the event log never
+// claims "origin" for a local directory.
+func (r *Runner) remoteLabel(mapping domain.RepositoryMapping) string {
+	if mapping.IsLocal() {
+		return "the local repository " + mapping.RepositoryPath
+	}
+	return "origin"
 }
 
 // cancelRequested reads the operator's cancel request from the durable record,

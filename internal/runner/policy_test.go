@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/systemgroup/redmine-coding-agent/internal/config"
+	"strings"
+
 	"github.com/systemgroup/redmine-coding-agent/internal/domain"
 	"github.com/systemgroup/redmine-coding-agent/internal/gitlab"
 )
@@ -59,5 +61,32 @@ func TestGlobalPolicyStillGatesTheRepositorySwitch(t *testing.T) {
 	}
 	if runner.mergeRequestEnabled(mapping) {
 		t.Error("a globally disabled merge request must not be overridden by the repository")
+	}
+}
+
+// A local repository has no merge-request endpoint, but pushing the dedicated
+// branch into it is still allowed and needs no GitLab client.
+func TestLocalRepositoryPushesButNeverOpensAMergeRequest(t *testing.T) {
+	cfg := &config.Config{
+		GitLab: config.GitLab{PushEnabled: true, MergeRequestEnabled: true},
+	}
+	runner := &Runner{config: cfg}
+	mapping := domain.RepositoryMapping{
+		RepositoryPath:      t.TempDir(),
+		PublishEnabled:      true,
+		MergeRequestEnabled: true,
+	}
+
+	if !mapping.IsLocal() {
+		t.Fatalf("%q was not recognised as a local path", mapping.RepositoryPath)
+	}
+	if !runner.publishEnabled(mapping) {
+		t.Error("pushing the branch into a local repository must not require GitLab")
+	}
+	if runner.mergeRequestEnabled(mapping) {
+		t.Error("a local repository must never open a merge request")
+	}
+	if got := runner.remoteLabel(mapping); !strings.Contains(got, "local repository") {
+		t.Errorf("remoteLabel = %q", got)
 	}
 }

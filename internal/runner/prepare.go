@@ -16,14 +16,19 @@ import (
 )
 
 // prepare proves every dependency is reachable before touching the filesystem,
-// then creates the isolated worktree (FR-016 – FR-020).
+// then creates the isolated worktree (FR-016 – FR-020). A local repository path
+// needs no GitLab server, so that connectivity stage is skipped entirely.
 func (r *Runner) prepare(ctx context.Context, run *domain.Run, mapping domain.RepositoryMapping, log *logging.RunLog) (*domain.Workspace, *outcome) {
 	if out := r.connectivityRedmine(ctx, run, log); out != nil {
 		return nil, out
 	}
-	project, out := r.connectivityGitLab(ctx, run, mapping, log)
-	if out != nil {
-		return nil, out
+	var project *gitlab.Project
+	if !mapping.IsLocal() {
+		gitlabOut := (*outcome)(nil)
+		project, gitlabOut = r.connectivityGitLab(ctx, run, mapping, log)
+		if gitlabOut != nil {
+			return nil, gitlabOut
+		}
 	}
 	if out := r.connectivityRepository(ctx, run, mapping, project, log); out != nil {
 		return nil, out
@@ -72,20 +77,35 @@ func (r *Runner) connectivityGitLab(ctx context.Context, run *domain.Run, mappin
 }
 
 func (r *Runner) connectivityRepository(ctx context.Context, run *domain.Run, mapping domain.RepositoryMapping, project *gitlab.Project, log *logging.RunLog) *outcome {
+	local := mapping.IsLocal()
+	message := "checking that the repository can be fetched with the configured credential"
+	if local {
+		message = "checking that the local repository " + mapping.RepositoryPath + " can be fetched"
+	}
 	_ = r.stage(ctx, run, domain.StageConnectivityRepository, domain.RunEvent{
 		Type:    domain.EventStage,
-		Message: "checking that the repository can be fetched with the configured credential",
+		Message: message,
 	}, log)
 
-	remoteURL := strings.TrimSpace(project.HTTPURL)
-	if remoteURL == "" {
-		out := failureOutcome(domain.FailConnectivityRepository,
-			"GitLab did not report an HTTP clone URL for "+mapping.RepositoryPath+".",
-			domain.StageConnectivityRepository)
-		return &out
+	remoteURL := ""
+	if local {
+		remoteURL = strings.TrimSpace(mapping.RepositoryPath)
+	} else {
+		if project == nil {
+			out := failureOutcome(domain.FailConnectivityRepository,
+				"GitLab did not report a clone URL for "+mapping.RepositoryPath+".", domain.StageConnectivityRepository)
+			return &out
+		}
+		remoteURL = strings.TrimSpace(project.HTTPURL)
+		if remoteURL == "" {
+			out := failureOutcome(domain.FailConnectivityRepository,
+				"GitLab did not report an HTTP clone URL for "+mapping.RepositoryPath+".",
+				domain.StageConnectivityRepository)
+			return &out
+		}
+		r.configureGitAuth()
 	}
 
-	r.configureGitAuth()
 	if _, err := r.git.EnsureMirror(ctx, mapping.ID, remoteURL); err != nil {
 		failure := domain.ConnectivityFailure(&domain.UpstreamError{
 			Kind: domain.UpstreamRepository,

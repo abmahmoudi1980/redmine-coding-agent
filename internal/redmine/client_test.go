@@ -317,3 +317,60 @@ func TestProbeReportsARejectedCredential(t *testing.T) {
 		t.Fatalf("error = %v, want a rejected-credential message", err)
 	}
 }
+
+func TestGetIssueResolvesTheProjectIdentifierWithOneExtraRead(t *testing.T) {
+	t.Setenv("TEST_REDMINE_KEY", testAPIKey)
+
+	payload := issuePayload()
+	issue, _ := payload["issue"].(map[string]any)
+	// Redmine (and Easy Redmine) send only id and name for the issue's project.
+	issue["project"] = map[string]any{"id": 7, "name": "Billing"}
+
+	paths := make([]string, 0, 2)
+	client, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/issues/4821.json":
+			_ = json.NewEncoder(w).Encode(payload)
+		case "/projects/7.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project": map[string]any{"id": 7, "identifier": "billing", "name": "Billing"},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	got, err := client.GetIssue(context.Background(), 4821)
+	if err != nil {
+		t.Fatalf("get issue: %v", err)
+	}
+	if got.Project.Identifier != "billing" {
+		t.Fatalf("identifier = %q, want billing", got.Project.Identifier)
+	}
+	if len(paths) != 2 || paths[0] != "/issues/4821.json" || paths[1] != "/projects/7.json" {
+		t.Fatalf("requested paths = %v", paths)
+	}
+}
+
+func TestGetIssueFailsWhenTheProjectIdentifierCannotBeResolved(t *testing.T) {
+	t.Setenv("TEST_REDMINE_KEY", testAPIKey)
+
+	payload := issuePayload()
+	issue, _ := payload["issue"].(map[string]any)
+	issue["project"] = map[string]any{"id": 7, "name": "Billing"}
+
+	client, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/issues/4821.json" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(payload)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	if _, err := client.GetIssue(context.Background(), 4821); err == nil {
+		t.Fatal("expected an error when the project identifier cannot be read")
+	}
+}

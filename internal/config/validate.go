@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/systemgroup/redmine-coding-agent/internal/domain"
 )
 
 // Validate checks every structural rule that can be checked without contacting
@@ -43,11 +45,8 @@ func (c *Config) Validate() error {
 		problems = append(problems, fmt.Errorf("redmine.api_key: %w", err))
 	}
 
-	if err := validateBaseURL("gitlab.base_url", c.GitLab.BaseURL); err != nil {
-		problems = append(problems, err)
-	}
-	if err := c.GitLab.Token.Validate(); err != nil {
-		problems = append(problems, fmt.Errorf("gitlab.token: %w", err))
+	if err := c.validateGitLab(); err != nil {
+		problems = append(problems, err...)
 	}
 
 	if strings.TrimSpace(c.Agent.Adapter) == "" {
@@ -77,6 +76,54 @@ func (c *Config) Validate() error {
 
 	problems = append(problems, c.validateRepositories()...)
 	return errors.Join(problems...)
+}
+
+// validateGitLab requires a GitLab endpoint only when at least one mapping is a
+// GitLab project path. A deployment whose repositories are all absolute local
+// paths runs without GitLab, so the whole section may be omitted; if any part of
+// it is present, the endpoint and the token must be present together.
+func (c *Config) validateGitLab() []error {
+	var problems []error
+	remote := c.usesRemoteRepositories()
+	baseURL := strings.TrimSpace(c.GitLab.BaseURL)
+	tokenSet := c.GitLab.Token.IsSet()
+
+	switch {
+	case remote:
+		if err := validateBaseURL("gitlab.base_url", baseURL); err != nil {
+			problems = append(problems, err)
+		}
+		if !tokenSet {
+			problems = append(problems, errors.New("gitlab.token is required when repository_path is a GitLab project path"))
+		} else if err := c.GitLab.Token.Validate(); err != nil {
+			problems = append(problems, fmt.Errorf("gitlab.token: %w", err))
+		}
+	case baseURL != "" || tokenSet:
+		// The section is optional for an all-local deployment, but a half
+		// configured section is a mistake worth rejecting at startup.
+		if baseURL == "" {
+			problems = append(problems, errors.New("gitlab.base_url is required when gitlab.token is set"))
+		} else if err := validateBaseURL("gitlab.base_url", baseURL); err != nil {
+			problems = append(problems, err)
+		}
+		if !tokenSet {
+			problems = append(problems, errors.New("gitlab.token is required when gitlab.base_url is set"))
+		} else if err := c.GitLab.Token.Validate(); err != nil {
+			problems = append(problems, fmt.Errorf("gitlab.token: %w", err))
+		}
+	}
+	return problems
+}
+
+// usesRemoteRepositories reports whether any configured mapping targets a
+// GitLab project rather than a local directory.
+func (c *Config) usesRemoteRepositories() bool {
+	for _, repository := range c.Repositories {
+		if !domain.IsLocalRepositoryPath(repository.RepositoryPath) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Config) validateRepositories() []error {

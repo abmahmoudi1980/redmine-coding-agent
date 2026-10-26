@@ -30,6 +30,7 @@ internal/web/dist/*
 # Local configuration and credentials
 config.yaml
 config.local.yaml
+/secrets/
 .env
 .env.*
 # Local agent configuration stays untracked, but share the Spec Kit commands

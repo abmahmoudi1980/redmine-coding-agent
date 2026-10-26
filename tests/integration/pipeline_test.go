@@ -34,14 +34,18 @@ type pipelineEnvironment struct {
 }
 
 type pipelineOptions struct {
-	tune      func(*config.Config)
-	validator runner.CommandRunner
+	tune        func(*config.Config)
+	tuneHarness func(*Harness)
+	validator   runner.CommandRunner
 }
 
 func newPipeline(t *testing.T, opts pipelineOptions) *pipelineEnvironment {
 	t.Helper()
 	h := New(t)
 	h.FakeAgent()
+	if opts.tuneHarness != nil {
+		opts.tuneHarness(h)
+	}
 	if opts.tune != nil {
 		opts.tune(h.Config)
 	}
@@ -60,13 +64,18 @@ func newPipeline(t *testing.T, opts pipelineOptions) *pipelineEnvironment {
 	if err != nil {
 		t.Fatalf("new redmine client: %v", err)
 	}
-	gitlabClient, err := gitlab.New(gitlab.Options{
-		BaseURL:  h.GitLab.URL(),
-		Token:    h.Config.GitLab.Token,
-		Redactor: h.Redactor,
-	})
-	if err != nil {
-		t.Fatalf("new gitlab client: %v", err)
+
+	// GitLab is optional: an all-local deployment runs without a client.
+	var gitlabClient *gitlab.Client
+	if strings.TrimSpace(h.Config.GitLab.BaseURL) != "" {
+		gitlabClient, err = gitlab.New(gitlab.Options{
+			BaseURL:  h.GitLab.URL(),
+			Token:    h.Config.GitLab.Token,
+			Redactor: h.Redactor,
+		})
+		if err != nil {
+			t.Fatalf("new gitlab client: %v", err)
+		}
 	}
 
 	manager := git.NewManager(h.ReposDir, h.WorkspaceRoot)

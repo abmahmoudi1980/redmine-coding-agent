@@ -220,3 +220,50 @@ func TestRedactedDocumentKeepsReferencesOnly(t *testing.T) {
 		t.Fatalf("apiKey = %v", redmine["apiKey"])
 	}
 }
+
+func TestAllLocalRepositoriesNeedNoGitLab(t *testing.T) {
+	cfg := decodeValid(t)
+	cfg.Repositories[0].RepositoryPath = t.TempDir()
+	cfg.GitLab = config.GitLab{PushEnabled: true}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("an all-local deployment must not require GitLab: %v", err)
+	}
+}
+
+func TestLocalRepositoryMayStillDisablePublishing(t *testing.T) {
+	cfg := decodeValid(t)
+	cfg.Repositories[0].RepositoryPath = t.TempDir()
+	cfg.GitLab = config.GitLab{}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a silent GitLab section must be accepted for local repositories: %v", err)
+	}
+}
+
+func TestRemoteRepositoryStillRequiresGitLab(t *testing.T) {
+	cfg := decodeValid(t)
+	cfg.GitLab = config.GitLab{}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("a GitLab project path must still require gitlab.base_url and gitlab.token")
+	}
+	if !strings.Contains(err.Error(), "gitlab.base_url") {
+		t.Fatalf("error %q does not name gitlab.base_url", err)
+	}
+	if !strings.Contains(err.Error(), "gitlab.token") {
+		t.Fatalf("error %q does not name gitlab.token", err)
+	}
+}
+
+func TestHalfConfiguredGitLabIsRejected(t *testing.T) {
+	cfg := decodeValid(t)
+	cfg.Repositories[0].RepositoryPath = t.TempDir()
+	cfg.GitLab = config.GitLab{BaseURL: "https://gitlab.example"}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "gitlab.token") {
+		t.Fatalf("a token-less GitLab section must be rejected: %v", err)
+	}
+}

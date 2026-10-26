@@ -157,8 +157,53 @@ func (c *Client) GetIssue(ctx context.Context, id int) (*Issue, error) {
 	if issue.ID == 0 {
 		issue.ID = id
 	}
+	if err := c.resolveProjectIdentifier(ctx, &issue); err != nil {
+		return nil, err
+	}
 	issue.RawJSON = string(envelope.Issue)
 	return &issue, nil
+}
+
+// resolveProjectIdentifier fills issue.Project.Identifier when the issue
+// payload omits it. Redmine's issue representation ships only the project id
+// and name, so the identifier that maps to a repository is read with one extra
+// GET rather than guessed from the id or the name.
+func (c *Client) resolveProjectIdentifier(ctx context.Context, issue *Issue) error {
+	if issue == nil {
+		return errors.New("redmine: issue is required")
+	}
+	if strings.TrimSpace(issue.Project.Identifier) != "" {
+		return nil
+	}
+	projectID := strings.TrimSpace(issue.Project.ID.String())
+	if projectID == "" {
+		return &domain.UpstreamError{
+			Kind: domain.UpstreamRedmine,
+			Op:   fmt.Sprintf("resolve project for issue %d", issue.ID),
+			Err:  errors.New("issue has no project id and no project identifier"),
+		}
+	}
+	project, err := c.GetProject(ctx, projectID)
+	if err != nil {
+		return &domain.UpstreamError{
+			Kind: domain.UpstreamRedmine,
+			Op:   fmt.Sprintf("resolve project %s for issue %d", projectID, issue.ID),
+			Err:  err,
+		}
+	}
+	identifier := strings.TrimSpace(project.Identifier)
+	if identifier == "" {
+		return &domain.UpstreamError{
+			Kind: domain.UpstreamRedmine,
+			Op:   fmt.Sprintf("resolve project %s for issue %d", projectID, issue.ID),
+			Err:  errors.New("project has no identifier"),
+		}
+	}
+	issue.Project.Identifier = identifier
+	if strings.TrimSpace(issue.Project.Name) == "" {
+		issue.Project.Name = project.Name
+	}
+	return nil
 }
 
 // Probe proves the configured credential can read Redmine. It performs one

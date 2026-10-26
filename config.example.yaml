@@ -21,6 +21,12 @@ gitlab:
   push_enabled: true
   merge_request_enabled: true
 
+# `repository_path` is either a GitLab project path ("group/project") or an
+# absolute directory on this machine ("/srv/repos/billing"). When every mapping
+# is a local directory the whole `gitlab` section may be omitted: the worker
+# clones from the path and never contacts a GitLab server. Set push_enabled to
+# have the dedicated branch pushed back into that local repository; merge
+# requests are always skipped for local paths.
 repositories:
   - redmine_project: "billing"
     repository_path: "group/billing-api"

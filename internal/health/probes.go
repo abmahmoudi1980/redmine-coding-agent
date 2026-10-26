@@ -143,7 +143,7 @@ func gitlabProbe(deps Deps) Probe {
 			if deps.GitLab == nil {
 				return "", fmt.Errorf("%w: no GitLab client is attached to this worker", ErrNotConfigured)
 			}
-			mapping, err := firstMapping(ctx, deps.Store)
+			mapping, err := firstRemoteMapping(ctx, deps.Store)
 			if err != nil {
 				return "", err
 			}
@@ -165,18 +165,22 @@ func repositoryProbe(deps Deps) Probe {
 			if deps.Git == nil {
 				return "", fmt.Errorf("%w: no git manager is attached to this worker", ErrNotConfigured)
 			}
-			if deps.GitLab == nil {
-				return "", fmt.Errorf("%w: no GitLab client is attached to this worker", ErrNotConfigured)
-			}
 			mapping, err := firstMapping(ctx, deps.Store)
 			if err != nil {
 				return "", err
 			}
-			project, err := deps.GitLab.GetProject(ctx, mapping.RepositoryPath)
-			if err != nil {
-				return "", errors.New(gitlab.FailureFor(err).Message)
+			remoteURL := mapping.RepositoryPath
+			if !mapping.IsLocal() {
+				if deps.GitLab == nil {
+					return "", fmt.Errorf("%w: no GitLab client is attached to this worker", ErrNotConfigured)
+				}
+				project, err := deps.GitLab.GetProject(ctx, mapping.RepositoryPath)
+				if err != nil {
+					return "", errors.New(gitlab.FailureFor(err).Message)
+				}
+				remoteURL = project.HTTPURL
 			}
-			branches, err := deps.Git.CheckRemote(ctx, project.HTTPURL)
+			branches, err := deps.Git.CheckRemote(ctx, remoteURL)
 			if err != nil {
 				return "", fmt.Errorf("git cannot read %s: %w", mapping.RepositoryPath, err)
 			}
@@ -278,4 +282,22 @@ func firstMapping(ctx context.Context, st *store.Store) (domain.RepositoryMappin
 		}
 	}
 	return domain.RepositoryMapping{}, fmt.Errorf("%w: no repository mapping is enabled in config.yaml", ErrNotConfigured)
+}
+
+// firstRemoteMapping reports the first mapping that needs a GitLab server. A
+// deployment of local paths only has nothing for the GitLab probe to call.
+func firstRemoteMapping(ctx context.Context, st *store.Store) (domain.RepositoryMapping, error) {
+	if st == nil {
+		return domain.RepositoryMapping{}, fmt.Errorf("%w: no repository table is attached to this worker", ErrNotConfigured)
+	}
+	mappings, err := st.ListRepositories(ctx)
+	if err != nil {
+		return domain.RepositoryMapping{}, fmt.Errorf("repository mappings could not be read: %w", err)
+	}
+	for _, mapping := range mappings {
+		if mapping.Enabled && !mapping.IsLocal() {
+			return mapping, nil
+		}
+	}
+	return domain.RepositoryMapping{}, fmt.Errorf("%w: every repository mapping is a local path", ErrNotConfigured)
 }

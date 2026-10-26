@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/systemgroup/redmine-coding-agent/internal/config"
+	"github.com/systemgroup/redmine-coding-agent/internal/health"
 	"github.com/systemgroup/redmine-coding-agent/internal/store"
 )
 
@@ -145,3 +146,19 @@ func TestRequiredCheckWarningDoesNotFailTheRun(t *testing.T) {
 }
 
 func boolPointer(value bool) *bool { return &value }
+
+func TestSecretsCheckAcceptsAnAllLocalDeployment(t *testing.T) {
+	t.Setenv("RCA_DOCTOR_REDMINE_KEY", "redmine-key")
+	cfg := &config.Config{
+		Redmine: config.Redmine{APIKey: config.NewSecretRef("env:RCA_DOCTOR_REDMINE_KEY")},
+		GitLab:  config.GitLab{}, // no server, no token: every repository is local
+	}
+
+	component := checkSecretReferences(cfg)
+	if component.Status != health.StatusOK {
+		t.Fatalf("secrets status = %q (%s), want ok", component.Status, component.Detail)
+	}
+	if !strings.Contains(component.Detail, "RCA_DOCTOR_REDMINE_KEY") {
+		t.Fatalf("detail = %q", component.Detail)
+	}
+}
