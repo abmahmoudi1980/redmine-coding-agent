@@ -1,7 +1,20 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { getHealth } from '$lib/api';
 
 	let { children } = $props();
+
+	let workerStatus = $state<'checking' | 'ok' | 'degraded' | 'unknown'>('checking');
+
+	onMount(async () => {
+		try {
+			const report = await getHealth();
+			workerStatus = report.status;
+		} catch {
+			workerStatus = 'unknown';
+		}
+	});
 </script>
 
 <header class="app-header">
@@ -9,6 +22,10 @@
 	<nav>
 		<a href={resolve('/')}>Issue preview</a>
 	</nav>
+	<p class="worker" data-testid="worker-status" aria-live="polite">
+		<span class:ok={workerStatus === 'ok'} class:degraded={workerStatus === 'degraded'}></span>
+		Worker: {workerStatus}
+	</p>
 </header>
 
 <main>
@@ -55,6 +72,31 @@
 
 	nav a:hover {
 		color: #fff;
+	}
+
+	.worker {
+		margin-left: auto;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.8rem;
+		color: #c9d7ea;
+	}
+
+	.worker span {
+		display: inline-block;
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 50%;
+		background: #8b98a8;
+	}
+
+	.worker span.ok {
+		background: #3ddc84;
+	}
+
+	.worker span.degraded {
+		background: #f0b429;
 	}
 
 	main {

@@ -123,25 +123,25 @@ Single Go module at the repository root, with the SPA in `web/`:
 
 ### Tests for User Story 1
 
-- [ ] T043 [P] [US1] Write `internal/redmine/client_test.go` against `httptest`: successful fetch with journals/relations/attachments, `404` → `issue_not_found`, `403` → `issue_inaccessible`, and a request that carries `X-Redmine-API-Key` but never logs it
-- [ ] T044 [P] [US1] Write `internal/runner/resolve_test.go`: single mapping resolves; two candidates with no default → `repository_ambiguous` with both candidates; zero mappings → `no_repository_mapping`; explicit `repositoryId` overrides an ambiguous project (FR-014/FR-015)
-- [ ] T045 [P] [US1] Write `tests/integration/preview_test.go`: preview creates no run row, no workspace directory, no branch; a second preview of the same issue is side-effect free
-- [ ] T046 [P] [US1] Write `web/e2e/preview.spec.ts` (Playwright, stub API): enter number → issue card and repository card render → Decline returns to the input with an empty state
+- [X] T043 [P] [US1] Write `internal/redmine/client_test.go` against `httptest`: successful fetch with journals/relations/attachments, `404` → `issue_not_found`, `403` → `issue_inaccessible`, and a request that carries `X-Redmine-API-Key` but never logs it
+- [X] T044 [P] [US1] Write `internal/runner/resolve_test.go`: single mapping resolves; two candidates with no default → `repository_ambiguous` with both candidates; zero mappings → `no_repository_mapping`; explicit `repositoryId` overrides an ambiguous project (FR-014/FR-015)
+- [X] T045 [P] [US1] Write `tests/integration/preview_test.go`: preview creates no run row, no workspace directory, no branch; a second preview of the same issue is side-effect free
+- [X] T046 [P] [US1] Write `web/e2e/preview.spec.ts` (Playwright, stub API): enter number → issue card and repository card render → Decline returns to the input with an empty state
 
 ### Implementation for User Story 1
 
-- [ ] T047 [P] [US1] Implement `internal/redmine/types.go` and `internal/redmine/client.go`: `Issue` with subject, description, project, status, tracker, priority, assignee, parent, relations, custom fields, journals, attachments; `GetIssue(ctx, id)` with `?include=journals,relations,children,attachments`; typed errors for not-found vs forbidden
-- [ ] T048 [P] [US1] Implement `internal/redmine/attachments.go`: download attachments into `<run_dir>/attachments/` when permitted, else record `available=false` with the reason (FR-007)
-- [ ] T049 [US1] Implement `internal/runner/snapshot.go`: build an `IssueSnapshot` from the Redmine payload, extract acceptance criteria by heading heuristic (`## Acceptance Criteria`, `AC:`, `معیار پذیرش`, `پذیرش`) setting `criteria_source`, compute `content_hash`, and select comments
-- [ ] T050 [US1] Implement `internal/runner/resolve.go`: resolve `repository_id` + `base_branch` strictly from the `repositories` table, returning `repository_ambiguous` with candidates or `no_repository_mapping` — no inference, no fallback branch (FR-014, FR-015)
-- [ ] T051 [P] [US1] Implement `internal/api/issues.go`: `GET /api/issues/{issueId}/preview` with `repositoryId` query support, plus `GET /api/repositories` returning mappings and checks
-- [ ] T052 [US1] Add issue-number validation to `internal/api/validate.go`: positive integer, rejects blank/non-numeric with `400 invalid_issue_id` **before** any Redmine call (FR-002)
-- [ ] T053 [US1] Wire the preview route to emit `warnings` for missing acceptance criteria and unavailable attachments, and to surface `candidates` on ambiguity
-- [ ] T054 [P] [US1] Implement `web/src/lib/api.ts` request helpers and TS types generated from `contracts/openapi.yaml` (`openapi-typescript`), covering `previewIssue`, `listRepositories`, and the `Problem` shape
-- [ ] T055 [P] [US1] Implement `web/src/lib/components/IssueCard.svelte` (subject, project, status, priority, assignee, description, acceptance criteria with source badge, comments, attachments) and `RepositoryPicker.svelte` (candidates, base branch, disabled state until chosen)
-- [ ] T056 [US1] Implement `web/src/routes/+page.svelte`: issue input with inline validation, preview request, loading and error states rendered from `Problem.detail`, and confirmation controls that stay inert until US2 wires them
-- [ ] T057 [US1] Implement the Decline path in `web/src/routes/+page.svelte` and `+page.server.ts`-free store reset: returns to input, clears the preview and any candidate selection, leaves no client-side artifact
-- [ ] T058 [US1] Add `GET /api/health` minimal handler in `internal/api/health.go` returning database readiness only (deep probes arrive in US6), so the SPA header can show worker liveness
+- [X] T047 [P] [US1] Implement `internal/redmine/types.go` and `internal/redmine/client.go`: `Issue` with subject, description, project, status, tracker, priority, assignee, parent, relations, custom fields, journals, attachments; `GetIssue(ctx, id)` with `?include=journals,relations,children,attachments`; typed errors for not-found vs forbidden
+- [X] T048 [P] [US1] Implement `internal/redmine/attachments.go`: download attachments into `<run_dir>/attachments/` when permitted, else record `available=false` with the reason (FR-007)
+- [X] T049 [US1] Implement `internal/runner/snapshot.go`: build an `IssueSnapshot` from the Redmine payload, extract acceptance criteria by heading heuristic (`## Acceptance Criteria`, `AC:`, `معیار پذیرش`, `پذیرش`) setting `criteria_source`, compute `content_hash`, and select comments
+- [X] T050 [US1] Implement `internal/runner/resolve.go`: resolve `repository_id` + `base_branch` strictly from the `repositories` table, returning `repository_ambiguous` with candidates or `no_repository_mapping` — no inference, no fallback branch (FR-014, FR-015)
+- [X] T051 [P] [US1] Implement `internal/api/issues.go`: `GET /api/issues/{issueId}/preview` with `repositoryId` query support, plus `GET /api/repositories` returning mappings and checks
+- [X] T052 [US1] Add issue-number validation to `internal/api/validate.go`: positive integer, rejects blank/non-numeric with `400 invalid_issue_id` **before** any Redmine call (FR-002)
+- [X] T053 [US1] Wire the preview route to emit `warnings` for missing acceptance criteria and unavailable attachments, and to surface `candidates` on ambiguity
+- [X] T054 [P] [US1] Implement `web/src/lib/api.ts` request helpers and TS types generated from `contracts/openapi.yaml` (`openapi-typescript`), covering `previewIssue`, `listRepositories`, and the `Problem` shape
+- [X] T055 [P] [US1] Implement `web/src/lib/components/IssueCard.svelte` (subject, project, status, priority, assignee, description, acceptance criteria with source badge, comments, attachments) and `RepositoryPicker.svelte` (candidates, base branch, disabled state until chosen)
+- [X] T056 [US1] Implement `web/src/routes/+page.svelte`: issue input with inline validation, preview request, loading and error states rendered from `Problem.detail`, and confirmation controls that stay inert until US2 wires them
+- [X] T057 [US1] Implement the Decline path in `web/src/routes/+page.svelte` and `+page.server.ts`-free store reset: returns to input, clears the preview and any candidate selection, leaves no client-side artifact
+- [X] T058 [US1] Add `GET /api/health` minimal handler in `internal/api/health.go` returning database readiness only (deep probes arrive in US6), so the SPA header can show worker liveness
 
 **Checkpoint**: US1 is demoable on its own — the operator can inspect any reachable issue and is never at risk of starting work by accident.
 
