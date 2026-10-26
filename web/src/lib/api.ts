@@ -145,3 +145,19 @@ export async function getRunChecks(runId: string): Promise<CheckAttempt[]> {
 	);
 	return payload.attempts ?? [];
 }
+
+/** cancelRun asks the worker to stop a run and returns immediately (FR-012). */
+export function cancelRun(runId: string): Promise<Run> {
+	return request<Run>(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' });
+}
+
+/**
+ * getRunLogs tails the run's already-redacted log file. A pruned file raises an
+ * ApiError with status 410, which the viewer renders as a settled state.
+ */
+export async function getRunLogs(runId: string, tail = 500): Promise<string[]> {
+	const payload = await request<{ lines: string[] }>(
+		`/api/runs/${encodeURIComponent(runId)}/logs?tail=${tail}`
+	);
+	return payload.lines ?? [];
+}

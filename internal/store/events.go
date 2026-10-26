@@ -15,7 +15,7 @@ import (
 func (s *Store) AppendEvent(ctx context.Context, runID int64, event domain.RunEvent) (int64, error) {
 	var seq int64
 	err := s.InTx(ctx, func(tx *Tx) error {
-		allocated, err := appendEvent(ctx, tx, runID, event, s.redact)
+		allocated, err := s.appendEvent(ctx, tx, runID, event)
 		if err != nil {
 			return err
 		}
@@ -25,7 +25,7 @@ func (s *Store) AppendEvent(ctx context.Context, runID int64, event domain.RunEv
 	return seq, err
 }
 
-func appendEvent(ctx context.Context, tx *Tx, runID int64, event domain.RunEvent, redact func(string) string) (int64, error) {
+func (s *Store) appendEvent(ctx context.Context, tx *Tx, runID int64, event domain.RunEvent) (int64, error) {
 	if runID == 0 {
 		return 0, errors.New("store: event run id is required")
 	}
@@ -49,10 +49,8 @@ func appendEvent(ctx context.Context, tx *Tx, runID int64, event domain.RunEvent
 	if data == "" {
 		data = "{}"
 	}
-	if redact != nil {
-		data = redact(data)
-		event.Message = redact(event.Message)
-	}
+	data = s.redact(data)
+	event.Message = s.redact(event.Message)
 	if !json.Valid([]byte(data)) {
 		encoded, err := json.Marshal(data)
 		if err != nil {
@@ -75,6 +73,11 @@ func appendEvent(ctx context.Context, tx *Tx, runID int64, event domain.RunEvent
 	); err != nil {
 		return 0, fmt.Errorf("store: append event: %w", err)
 	}
+
+	event.Seq = seq
+	event.RunID = runID
+	event.Data = data
+	tx.pending = append(tx.pending, pendingEvent{RunID: runID, Event: event})
 	return seq, nil
 }
 

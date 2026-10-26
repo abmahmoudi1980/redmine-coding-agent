@@ -148,6 +148,15 @@ func (l *Logger) Flush() error {
 	return l.stderrWriter.Flush()
 }
 
+// RunLogPath is where WithRun writes a run's log file. The API uses it to tail
+// the already-redacted file on demand (T103).
+func (l *Logger) RunLogPath(runID string) string {
+	if l == nil {
+		return ""
+	}
+	return filepath.Join(l.logDir, sanitizeRunID(runID)+".log")
+}
+
 func sanitizeRunID(runID string) string {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {

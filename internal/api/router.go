@@ -37,26 +37,37 @@ type Deps struct {
 	Redactor *logging.Redactor
 	Redmine  *redmine.Client
 	Runs     RunService
+	Hub      *Hub
 	Build    BuildInfo
 }
 
 // Server owns routing and middleware.
 type Server struct {
-	config   *config.Config
-	store    *store.Store
-	logger   *logging.Logger
-	redactor *logging.Redactor
-	redmine  *redmine.Client
-	runs     RunService
-	build    BuildInfo
+	config            *config.Config
+	store             *store.Store
+	logger            *logging.Logger
+	redactor          *logging.Redactor
+	redmine           *redmine.Client
+	runs              RunService
+	hub               *Hub
+	build             BuildInfo
+	heartbeatInterval time.Duration
 }
 
 // NewServer builds a Server, defaulting the redactor so scrubbing is never
-// accidentally disabled.
+// accidentally disabled. It also connects the store's committed-event tail to
+// the hub, which is what makes the SSE stream live.
 func NewServer(deps Deps) *Server {
 	redactor := deps.Redactor
 	if redactor == nil {
 		redactor = logging.NewRedactor()
+	}
+	hub := deps.Hub
+	if hub == nil {
+		hub = NewHub()
+	}
+	if deps.Store != nil {
+		deps.Store.SetEventSink(hub.Publish)
 	}
 	return &Server{
 		config:   deps.Config,
@@ -65,6 +76,7 @@ func NewServer(deps Deps) *Server {
 		redactor: redactor,
 		redmine:  deps.Redmine,
 		runs:     deps.Runs,
+		hub:      hub,
 		build:    deps.Build,
 	}
 }
@@ -89,12 +101,12 @@ func (s *Server) Routes() []Route {
 		{http.MethodPost, "/api/runs", "createRun", s.handleCreateRun},
 		{http.MethodGet, "/api/runs", "listRuns", s.notImplemented("listRuns")},
 		{http.MethodGet, "/api/runs/{runId}", "getRun", s.handleGetRun},
-		{http.MethodPost, "/api/runs/{runId}/cancel", "cancelRun", s.notImplemented("cancelRun")},
+		{http.MethodPost, "/api/runs/{runId}/cancel", "cancelRun", s.handleCancelRun},
 		{http.MethodPost, "/api/runs/{runId}/retry", "retryRun", s.notImplemented("retryRun")},
 		{http.MethodGet, "/api/runs/{runId}/checks", "getRunChecks", s.handleGetRunChecks},
 		{http.MethodGet, "/api/runs/{runId}/report", "getRunReport", s.handleGetRunReport},
-		{http.MethodGet, "/api/runs/{runId}/logs", "getRunLogs", s.notImplemented("getRunLogs")},
-		{http.MethodGet, "/api/runs/{runId}/events", "streamRunEvents", s.notImplemented("streamRunEvents")},
+		{http.MethodGet, "/api/runs/{runId}/logs", "getRunLogs", s.handleGetRunLogs},
+		{http.MethodGet, "/api/runs/{runId}/events", "streamRunEvents", s.handleStreamRunEvents},
 	}
 }
 

@@ -50,7 +50,7 @@ func (r *Runner) publishAndReport(ctx context.Context, run *domain.Run, snapshot
 	r.persistReport(ctx, run, snapshot, workspace, result, terminal, failure, log)
 
 	if cancelled {
-		return outcome{State: domain.StateCancelled, Stage: domain.StageBranchPushed}
+		return cancelledOutcome(run.Stage)
 	}
 	if failure != nil {
 		return outcome{State: terminal, Stage: domain.StageReportWritten, Failure: failure}
@@ -159,7 +159,8 @@ func (r *Runner) mergeRequestEnabled(mapping domain.RepositoryMapping) bool {
 }
 
 // cancelRequested reads the operator's cancel request from the durable record,
-// so a cancel that arrived between stages is never missed (FR-012).
+// so a cancel that arrived between stages is never missed (FR-012). The read is
+// detached from the run context: after a cancel the context is already dead.
 func (r *Runner) cancelRequested(ctx context.Context, run *domain.Run) bool {
 	if run.CancelRequestedAt != nil {
 		return true
@@ -167,7 +168,9 @@ func (r *Runner) cancelRequested(ctx context.Context, run *domain.Run) bool {
 	if r.store == nil {
 		return false
 	}
-	latest, err := r.store.GetRun(ctx, run.ID)
+	readCtx, cancel := durableContext(ctx)
+	defer cancel()
+	latest, err := r.store.GetRun(readCtx, run.ID)
 	if err != nil || latest == nil || latest.CancelRequestedAt == nil {
 		return false
 	}

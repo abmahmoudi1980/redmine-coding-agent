@@ -28,6 +28,10 @@ func (r *Runner) validateAndCommit(ctx context.Context, run *domain.Run, snapsho
 	}
 
 	for {
+		if out := r.stopRequested(ctx, run); out != nil {
+			return *out
+		}
+
 		paths, err := r.git.ChangedPaths(ctx, workspace.Path)
 		if err != nil {
 			return failureOutcome(domain.FailWorkspaceFailed, err.Error(), domain.StageChecksRunning)
@@ -38,6 +42,9 @@ func (r *Runner) validateAndCommit(ctx context.Context, run *domain.Run, snapsho
 		r.recordChanges(ctx, run, workspace, paths, log)
 
 		results := r.runChecks(ctx, run, checks, workspace, invocation, attempt, log)
+		if out := r.stopRequested(ctx, run); out != nil {
+			return *out
+		}
 		if requiredPassed(results) {
 			break
 		}
@@ -65,12 +72,25 @@ func (r *Runner) validateAndCommit(ctx context.Context, run *domain.Run, snapsho
 		}
 	}
 
+	if out := r.stopRequested(ctx, run); out != nil {
+		return *out
+	}
 	return r.commit(ctx, run, snapshot, mapping, workspace, log, publishEnabled)
 }
 
 func (r *Runner) runChecks(ctx context.Context, run *domain.Run, checks []domain.CheckDefinition, workspace *domain.Workspace, invocation *domain.AgentInvocation, attempt int, log *logging.RunLog) []domain.ValidationResult {
 	results := make([]domain.ValidationResult, 0, len(checks))
 	for _, check := range checks {
+		if ctx.Err() != nil || r.cancelRequested(ctx, run) {
+			results = append(results, domain.ValidationResult{
+				CheckName: check.Name,
+				Command:   check.CommandFor(runtime.GOOS),
+				Required:  check.Required,
+				Outcome:   domain.OutcomeNotExecuted,
+				Reason:    "cancelled",
+			})
+			continue
+		}
 		stage := domain.CheckRunningStage(check.Name)
 		_ = r.stage(ctx, run, stage, domain.RunEvent{
 			Type:    domain.EventCheck,
@@ -167,6 +187,9 @@ func (r *Runner) validationFailed(ctx context.Context, run *domain.Run, attempt 
 }
 
 func (r *Runner) commit(ctx context.Context, run *domain.Run, snapshot domain.IssueSnapshot, mapping domain.RepositoryMapping, workspace *domain.Workspace, log *logging.RunLog, publishEnabled bool) outcome {
+	if out := r.stopRequested(ctx, run); out != nil {
+		return *out
+	}
 	if err := r.git.AddAll(ctx, workspace.Path); err != nil {
 		return failureOutcome(domain.FailWorkspaceFailed, err.Error(), domain.StageChecksFinished)
 	}

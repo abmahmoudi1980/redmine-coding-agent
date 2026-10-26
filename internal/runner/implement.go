@@ -141,6 +141,11 @@ func (r *Runner) invoke(ctx context.Context, run *domain.Run, snapshot domain.Is
 	r.finishInvocation(ctx, invocation, finish.Status, finish.ExitCode, finish.TimedOut, finish.ReportedStatus, finish.ResultSummary)
 	r.recordInvocationEvents(ctx, run, attempt, result, runErr, log)
 
+	// A cancel request wins over whatever the agent reported: the operator's
+	// stop is the truthful cause, and no later stage may run (US4-AC4).
+	if out := r.stopRequested(ctx, run); out != nil {
+		return invocation, out
+	}
 	if out := r.outcomeForInvocation(result, runErr, attempt); out != nil {
 		return invocation, out
 	}
@@ -152,8 +157,11 @@ func (r *Runner) finishInvocation(ctx context.Context, invocation *domain.AgentI
 	if invocation == nil {
 		return
 	}
+	writeCtx, cancel := durableContext(ctx)
+	defer cancel()
+
 	ended := time.Now().UTC()
-	err := r.store.FinishInvocation(ctx, invocation.ID, store.InvocationFinish{
+	err := r.store.FinishInvocation(writeCtx, invocation.ID, store.InvocationFinish{
 		Status:         status,
 		ExitCode:       exitCode,
 		TimedOut:       timedOut,
@@ -236,17 +244,13 @@ func (r *Runner) recordInvocationEvents(ctx context.Context, run *domain.Run, at
 	}
 
 	emitted := 0
-	for _, activity := range result.Activity {
+	for _, line := range summariseActivity(result.Activity, maxActivityEventsPerAttempt) {
 		if emitted >= maxActivityEventsPerAttempt {
-			r.event(ctx, run, domain.RunEvent{
-				Type:    domain.EventActivity,
-				Message: "further agent activity is in the transcript",
-			})
 			break
 		}
 		r.event(ctx, run, domain.RunEvent{
 			Type:    domain.EventActivity,
-			Message: activity.Message,
+			Message: line,
 		})
 		emitted++
 	}

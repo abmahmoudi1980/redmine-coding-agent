@@ -58,6 +58,9 @@ type Runner struct {
 	newID     func() (string, error)
 	agent     agentSettings
 
+	cancelMu sync.Mutex
+	cancels  map[string]context.CancelFunc
+
 	wg sync.WaitGroup
 }
 
@@ -245,10 +248,16 @@ func (r *Runner) Create(ctx context.Context, req CreateRequest) (*domain.Run, er
 func (r *Runner) Wait() { r.wg.Wait() }
 
 // execute runs one pipeline on its own context and settles the terminal state.
+// The context is cancellable by the operator and is the only thing standing
+// between a long agent run and a pushed branch (FR-012).
 func (r *Runner) execute(run *domain.Run, snapshot domain.IssueSnapshot, mapping domain.RepositoryMapping, runDir string) {
 	defer r.wg.Done()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	untrack := r.trackCancel(run.PublicID, cancel)
+	defer untrack()
+
 	runLog, err := r.logger.WithRun(run.PublicID, string(run.Stage))
 	if err != nil {
 		r.logger.Base().Error("run log unavailable", "run_id", run.PublicID, "error", err)
@@ -264,6 +273,9 @@ func (r *Runner) execute(run *domain.Run, snapshot domain.IssueSnapshot, mapping
 // pipeline drives the state machine from preparing to the last implemented
 // stage. Every returned outcome is a terminal state unless State is empty.
 func (r *Runner) pipeline(ctx context.Context, run *domain.Run, snapshot domain.IssueSnapshot, mapping domain.RepositoryMapping, log *logging.RunLog) outcome {
+	if out := r.stopRequested(ctx, run); out != nil {
+		return *out
+	}
 	if out := r.advance(ctx, run, domain.StatePreparing, domain.StageCreated, domain.Conditions{}, nil, log, "connectivity checks are starting"); out != nil {
 		return *out
 	}
@@ -273,6 +285,9 @@ func (r *Runner) pipeline(ctx context.Context, run *domain.Run, snapshot domain.
 		return *out
 	}
 
+	if out := r.stopRequested(ctx, run); out != nil {
+		return *out
+	}
 	if out := r.advance(ctx, run, domain.StateImplementing, domain.StageWorkspaceCreated, domain.Conditions{}, nil, log, "the agent is being invoked"); out != nil {
 		return *out
 	}
@@ -282,6 +297,9 @@ func (r *Runner) pipeline(ctx context.Context, run *domain.Run, snapshot domain.
 		return *out
 	}
 
+	if out := r.stopRequested(ctx, run); out != nil {
+		return *out
+	}
 	if out := r.advance(ctx, run, domain.StateValidating, domain.AgentInvokedStage(1), domain.Conditions{}, nil, log, "the worker is inspecting the change"); out != nil {
 		return *out
 	}
@@ -292,6 +310,11 @@ func (r *Runner) pipeline(ctx context.Context, run *domain.Run, snapshot domain.
 // settle writes the terminal state. A parked outcome (State empty) leaves the
 // run where it is and records why.
 func (r *Runner) settle(ctx context.Context, run *domain.Run, out outcome, log *logging.RunLog) {
+	// The terminal write must land even though the run's context is cancelled.
+	writeCtx, cancel := durableContext(ctx)
+	defer cancel()
+	ctx = writeCtx
+
 	if out.State == "" {
 		r.logger.Base().Warn("run parked before publishing",
 			"run_id", run.PublicID, "stage", run.Stage, "state", run.State)
@@ -303,20 +326,34 @@ func (r *Runner) settle(ctx context.Context, run *domain.Run, out outcome, log *
 		return
 	}
 
+	// reporting may not move to cancelled; if the cancel arrived that late, the
+	// report is already written and completed is the truthful outcome.
+	if out.State == domain.StateCancelled && run.State == domain.StateReporting {
+		out.State = domain.StateCompleted
+		out.Failure = nil
+		r.event(ctx, run, domain.RunEvent{
+			Type:     domain.EventWarning,
+			Severity: domain.SeverityWarn,
+			Message:  "the cancel request arrived after the report was written; the run completed and is recorded as such",
+		})
+	}
+
 	stage := out.Stage
 	if stage == "" {
 		stage = run.Stage
+	}
+	event := domain.RunEvent{
+		Type:     domain.EventState,
+		Severity: domain.SeverityInfo,
+		Message:  fmt.Sprintf("run ended %s at %s", out.State, stage),
+		Data:     fmt.Sprintf(`{"state":%q,"stage":%q}`, out.State, stage),
 	}
 	transition := store.Transition{
 		To:         out.State,
 		Stage:      stage,
 		Conditions: out.Conditions,
 		Failure:    out.Failure,
-		Event: domain.RunEvent{
-			Type:     domain.EventState,
-			Severity: domain.SeverityInfo,
-			Message:  fmt.Sprintf("run ended %s at %s", out.State, stage),
-		},
+		Event:      event,
 	}
 	if out.State == domain.StateCancelled {
 		transition.Conditions.CancelRequested = true
@@ -332,6 +369,8 @@ func (r *Runner) settle(ctx context.Context, run *domain.Run, out outcome, log *
 			"run_id", run.PublicID, "state", out.State, "error", err)
 		return
 	}
+	run.State = out.State
+	run.Stage = stage
 	r.persistFallbackReport(ctx, run, out)
 	if out.Failure != nil {
 		r.logger.Base().Info("run failed",
@@ -357,8 +396,16 @@ func failureOutcome(code domain.FailureCode, message string, stage domain.Stage)
 // advance moves the run to a new state and records the transition. A nil
 // return means the move succeeded.
 func (r *Runner) advance(ctx context.Context, run *domain.Run, to domain.RunState, stage domain.Stage, conditions domain.Conditions, failure *domain.Failure, log *logging.RunLog, message string) *outcome {
-	event := domain.RunEvent{Type: domain.EventState, Severity: domain.SeverityInfo, Message: message}
-	if err := r.store.TransitionRun(ctx, run.ID, store.Transition{
+	writeCtx, cancel := durableContext(ctx)
+	defer cancel()
+
+	event := domain.RunEvent{
+		Type:     domain.EventState,
+		Severity: domain.SeverityInfo,
+		Message:  message,
+		Data:     fmt.Sprintf(`{"state":%q,"stage":%q}`, to, stage),
+	}
+	if err := r.store.TransitionRun(writeCtx, run.ID, store.Transition{
 		To:         to,
 		Stage:      stage,
 		Conditions: conditions,
@@ -381,11 +428,17 @@ func (r *Runner) advance(ctx context.Context, run *domain.Run, to domain.RunStat
 
 // stage records progress inside the current state.
 func (r *Runner) stage(ctx context.Context, run *domain.Run, stage domain.Stage, event domain.RunEvent, log *logging.RunLog) error {
+	writeCtx, cancel := durableContext(ctx)
+	defer cancel()
+
 	run.Stage = stage
 	if event.Type == "" {
 		event.Type = domain.EventStage
 	}
-	if err := r.store.SetStage(ctx, run.ID, stage, event); err != nil {
+	if !strings.Contains(event.Data, `"stage"`) {
+		event.Data = fmt.Sprintf(`{"stage":%q}`, stage)
+	}
+	if err := r.store.SetStage(writeCtx, run.ID, stage, event); err != nil {
 		if log != nil {
 			log.Warn("could not record the stage", "stage", stage, "error", err)
 		}
@@ -398,7 +451,9 @@ func (r *Runner) stage(ctx context.Context, run *domain.Run, stage domain.Stage,
 }
 
 func (r *Runner) event(ctx context.Context, run *domain.Run, event domain.RunEvent) {
-	if _, err := r.store.AppendEvent(ctx, run.ID, event); err != nil {
+	writeCtx, cancel := durableContext(ctx)
+	defer cancel()
+	if _, err := r.store.AppendEvent(writeCtx, run.ID, event); err != nil {
 		r.logger.Base().Warn("could not append a run event",
 			"run_id", run.PublicID, "error", err)
 	}

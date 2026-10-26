@@ -265,7 +265,7 @@ func (s *Store) SetStage(ctx context.Context, runID int64, stage domain.Stage, e
 		if event.Message == "" {
 			event.Message = "stage " + stage.String()
 		}
-		_, err = appendEvent(ctx, tx, runID, event, s.redact)
+		_, err = s.appendEvent(ctx, tx, runID, event)
 		return err
 	})
 }
@@ -474,7 +474,7 @@ func (s *Store) TransitionRun(ctx context.Context, runID int64, transition Trans
 			event.Message = fmt.Sprintf("state %s -> %s (%s)", from, transition.To, stage)
 		}
 		event.At = now
-		if _, err := appendEvent(ctx, tx, runID, event, s.redact); err != nil {
+		if _, err := s.appendEvent(ctx, tx, runID, event); err != nil {
 			return err
 		}
 		return nil
@@ -509,11 +509,11 @@ func (s *Store) RequestCancel(ctx context.Context, runID int64) (bool, error) {
 		); err != nil {
 			return fmt.Errorf("store: request cancel: %w", err)
 		}
-		_, err = appendEvent(ctx, tx, runID, domain.RunEvent{
+		_, err = s.appendEvent(ctx, tx, runID, domain.RunEvent{
 			Type:     domain.EventWarning,
 			Severity: domain.SeverityWarn,
 			Message:  "cancel requested",
-		}, s.redact)
+		})
 		return err
 	})
 	return changed, err
@@ -548,13 +548,109 @@ func (s *Store) MarkRunInterrupted(ctx context.Context, runID int64) error {
 		); err != nil {
 			return fmt.Errorf("store: mark interrupted: %w", err)
 		}
-		_, err = appendEvent(ctx, tx, runID, domain.RunEvent{
+		_, err = s.appendEvent(ctx, tx, runID, domain.RunEvent{
 			Type:     domain.EventState,
 			Severity: domain.SeverityWarn,
 			Message:  fmt.Sprintf("run interrupted in stage %s by restart recovery", stage),
-		}, s.redact)
+		})
 		return err
 	})
+}
+
+// InterruptActiveRuns is the startup recovery sweep (FR-051). In one
+// transaction, every non-terminal run is frozen at its last recorded stage so a
+// restarted worker can never resume it into a push, merge request, or report.
+// Terminal runs are neither read nor touched.
+func (s *Store) InterruptActiveRuns(ctx context.Context) ([]domain.Run, error) {
+	var interrupted []domain.Run
+	err := s.InTx(ctx, func(tx *Tx) error {
+		placeholders := activeStatePlaceholders()
+		args := make([]any, 0, len(domain.ActiveRunStates))
+		for _, state := range domain.ActiveRunStates {
+			args = append(args, string(state))
+		}
+
+		// #nosec G202 -- the clause is fixed and values stay in placeholders.
+		rows, err := tx.QueryContext(ctx,
+			`SELECT id, public_id, issue_id, state, stage FROM runs
+			 WHERE state IN (`+placeholders+`) ORDER BY id ASC`, args...)
+		if err != nil {
+			return fmt.Errorf("store: list active runs: %w", err)
+		}
+		type activeRun struct {
+			id       int64
+			publicID string
+			issueID  int
+			state    domain.RunState
+			stage    domain.Stage
+		}
+		var active []activeRun
+		for rows.Next() {
+			var item activeRun
+			if err := rows.Scan(&item.id, &item.publicID, &item.issueID, &item.state, &item.stage); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("store: scan active run: %w", err)
+			}
+			active = append(active, item)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("store: iterate active runs: %w", err)
+		}
+		_ = rows.Close()
+
+		now := nowUTC()
+		stamp := domain.FormatTime(now)
+		for _, item := range active {
+			if err := domain.MarkInterrupted(item.state); err != nil {
+				return err
+			}
+			result, err := tx.ExecContext(ctx, `
+				UPDATE runs SET state = ?, interrupted_stage = ?, ended_at = ?,
+				       failure_code = ?, failure_message = ?
+				WHERE id = ? AND state = ?`,
+				string(domain.StateInterrupted), string(item.stage), stamp,
+				string(domain.FailInterrupted), "worker stopped before the run finished",
+				item.id, string(item.state),
+			)
+			if err != nil {
+				return fmt.Errorf("store: mark run %s interrupted: %w", item.publicID, err)
+			}
+			affected, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("store: rows affected: %w", err)
+			}
+			if affected != 1 {
+				return fmt.Errorf("store: run %s changed during recovery", item.publicID)
+			}
+
+			if _, err := s.appendEvent(ctx, tx, item.id, domain.RunEvent{
+				Type:     domain.EventState,
+				Severity: domain.SeverityWarn,
+				Message:  fmt.Sprintf("run interrupted in stage %s by startup recovery", item.stage),
+				Data:     fmt.Sprintf(`{"state":%q,"stage":%q}`, domain.StateInterrupted, item.stage),
+			}); err != nil {
+				return err
+			}
+
+			interrupted = append(interrupted, domain.Run{
+				ID:               item.id,
+				PublicID:         item.publicID,
+				IssueID:          item.issueID,
+				State:            domain.StateInterrupted,
+				Stage:            item.stage,
+				InterruptedStage: item.stage,
+				EndedAt:          &now,
+				FailureCode:      domain.FailInterrupted,
+				FailureMessage:   "worker stopped before the run finished",
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return interrupted, nil
 }
 
 // SetRunFailure records a failure reason without changing state.

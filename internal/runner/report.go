@@ -133,6 +133,9 @@ func renderReport(input reportInput) string {
 	if summary != "" {
 		fmt.Fprintf(&b, "\n%s\n", summary)
 	}
+	if input.Workspace != nil && input.Workspace.HasUnpushedChanges {
+		b.WriteString("\nThe workspace still holds unpushed changes. Nothing was pushed to a remote and no merge request was opened for this outcome.\n")
+	}
 
 	b.WriteString("\n### Validation\n\n")
 	if len(input.Checks) == 0 {
@@ -323,7 +326,18 @@ func (r *Runner) persistReport(ctx context.Context, run *domain.Run, snapshot do
 		})
 	}
 
-	status, deliveryError, deliveredAt := r.deliverReport(ctx, run, report, log)
+	status, deliveryError, deliveredAt := "skipped", "", (*time.Time)(nil)
+	if terminal == domain.StateCancelled {
+		// US4-AC4: a cancelled run starts no reporting action, but the report is
+		// still stored so the operator can read it in the run view.
+		r.event(ctx, run, domain.RunEvent{
+			Type:     domain.EventReport,
+			Severity: domain.SeverityWarn,
+			Message:  "the run was cancelled, so the report was stored locally and not posted to Redmine",
+		})
+	} else {
+		status, deliveryError, deliveredAt = r.deliverReport(ctx, run, report, log)
+	}
 	report.DeliveryStatus = status
 	report.DeliveryError = deliveryError
 	report.DeliveredAt = deliveredAt

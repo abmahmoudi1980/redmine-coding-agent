@@ -222,22 +222,22 @@ Single Go module at the repository root, with the SPA in `web/`:
 
 ### Tests for User Story 4
 
-- [ ] T094 [P] [US4] Write `internal/api/events_test.go`: SSE emits `id`/`event`/`data` per `contracts/openapi.yaml`, replays strictly after `Last-Event-ID`, sends a heartbeat, and closes after the terminal event
-- [ ] T095 [P] [US4] Write `internal/runner/cancel_test.go`: cancel during `implementing` yields `cancelled` with `cancel_requested_at`, the agent context is cancelled, and no publish/report step runs afterwards (US4-AC4)
-- [ ] T096 [P] [US4] Write `tests/integration/cancel_test.go` with fake-agent `hang` + `grandchild` modes: the whole tree is dead within 30 s, logs survive, `has_unpushed_changes` is recorded, and nothing is pushed (SC-009)
-- [ ] T097 [P] [US4] Write `web/e2e/run-live.spec.ts`: stage indicator advances, elapsed timer ticks, activity lines appear, and the Cancel button confirms then reflects the terminal state
+- [X] T094 [P] [US4] Write `internal/api/events_test.go`: SSE emits `id`/`event`/`data` per `contracts/openapi.yaml`, replays strictly after `Last-Event-ID`, sends a heartbeat, and closes after the terminal event
+- [X] T095 [P] [US4] Write `internal/runner/cancel_test.go`: cancel during `implementing` yields `cancelled` with `cancel_requested_at`, the agent context is cancelled, and no publish/report step runs afterwards (US4-AC4)
+- [X] T096 [P] [US4] Write `tests/integration/cancel_test.go` with fake-agent `hang` + `grandchild` modes: the whole tree is dead within 30 s, logs survive, `has_unpushed_changes` is recorded, and nothing is pushed (SC-009)
+- [X] T097 [P] [US4] Write `web/e2e/run-live.spec.ts`: stage indicator advances, elapsed timer ticks, activity lines appear, and the Cancel button confirms then reflects the terminal state
 
 ### Implementation for User Story 4
 
-- [ ] T098 [US4] Implement `internal/api/events.go`: `GET /api/runs/{runId}/events` as `text/event-stream`, replay from `run_events` using `Last-Event-ID`, live subscription via an in-process hub, 15 s heartbeats, terminal-event close, and `Flusher` correctness under `http.Server`
-- [ ] T099 [US4] Implement the event hub in `internal/api/hub.go`: per-run subscriber registry with bounded buffers that drop the oldest events for a slow client without blocking the runner
-- [ ] T100 [US4] Implement cancellation: `POST /api/runs/{runId}/cancel` in `internal/api/runs.go` sets `cancel_requested_at`, cancels the runner context, returns `202`; idempotent for an already-cancelled run, `409 run_not_cancellable` when terminal (FR-012, FR-013)
-- [ ] T101 [US4] Implement `internal/runner/cancel.go`: cancellation checks at every stage boundary so publishing and reporting never begin after a cancel request, while already-completed side effects stay recorded and are never rolled back
-- [ ] T102 [US4] Implement activity summarisation in `internal/runner/activity.go`: coalesce agent tool events into readable lines (file reads/edits, commands, permission denials) and emit `activity` events without flooding the timeline
-- [ ] T103 [US4] Implement `GET /api/runs/{runId}/logs?tail=N` in `internal/api/runs.go`: tail the run log file, already redacted, `410` when pruned
-- [ ] T104 [P] [US4] Implement `web/src/lib/sse.ts`: `EventSource` wrapper with `Last-Event-ID` resume, reconnect backoff, typed event dispatch, and teardown on route destroy
-- [ ] T105 [US4] Convert `web/src/routes/runs/[id]/+page.svelte` to the live view: stage stepper, server-anchored elapsed timer, activity feed, live check results, cancel with confirmation, and a post-terminal "what happened / what to do next" panel (SC-011)
-- [ ] T106 [P] [US4] Implement `web/src/lib/components/LogViewer.svelte`: collapsible redacted log tail fetched on demand, with a clear "logs pruned" state
+- [X] T098 [US4] Implement `internal/api/events.go`: `GET /api/runs/{runId}/events` as `text/event-stream`, replay from `run_events` using `Last-Event-ID`, live subscription via an in-process hub, 15 s heartbeats, terminal-event close, and `Flusher` correctness under `http.Server`
+- [X] T099 [US4] Implement the event hub in `internal/api/hub.go`: per-run subscriber registry with bounded buffers that drop the oldest events for a slow client without blocking the runner
+- [X] T100 [US4] Implement cancellation: `POST /api/runs/{runId}/cancel` in `internal/api/runs.go` sets `cancel_requested_at`, cancels the runner context, returns `202`; idempotent for an already-cancelled run, `409 run_not_cancellable` when terminal (FR-012, FR-013)
+- [X] T101 [US4] Implement `internal/runner/cancel.go`: cancellation checks at every stage boundary so publishing and reporting never begin after a cancel request, while already-completed side effects stay recorded and are never rolled back
+- [X] T102 [US4] Implement activity summarisation in `internal/runner/activity.go`: coalesce agent tool events into readable lines (file reads/edits, commands, permission denials) and emit `activity` events without flooding the timeline
+- [X] T103 [US4] Implement `GET /api/runs/{runId}/logs?tail=N` in `internal/api/runs.go`: tail the run log file, already redacted, `410` when pruned
+- [X] T104 [P] [US4] Implement `web/src/lib/sse.ts`: `EventSource` wrapper with `Last-Event-ID` resume, reconnect backoff, typed event dispatch, and teardown on route destroy
+- [X] T105 [US4] Convert `web/src/routes/runs/[id]/+page.svelte` to the live view: stage stepper, server-anchored elapsed timer, activity feed, live check results, cancel with confirmation, and a post-terminal "what happened / what to do next" panel (SC-011)
+- [X] T106 [P] [US4] Implement `web/src/lib/components/LogViewer.svelte`: collapsible redacted log tail fetched on demand, with a clear "logs pruned" state
 
 **Checkpoint**: Long autonomous work is observable and stoppable — safe to leave running unattended.
 

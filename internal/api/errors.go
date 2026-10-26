@@ -94,6 +94,12 @@ func TitleFor(code string) string {
 		return "Run not found"
 	case "run_not_cancellable":
 		return "Run cannot be cancelled"
+	case "logs_pruned":
+		return "Logs were pruned"
+	case "invalid_tail":
+		return "Invalid log tail size"
+	case "streaming_unsupported":
+		return "Streaming unsupported"
 	case "connectivity_redmine":
 		return "Redmine unreachable"
 	case "connectivity_gitlab":

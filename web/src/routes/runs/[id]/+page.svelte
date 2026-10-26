@@ -1,16 +1,62 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import { ApiError, getRun, type Problem, type RunDetail } from '$lib/api';
+	import {
+		ApiError,
+		cancelRun,
+		getRun,
+		type Problem,
+		type Run,
+		type RunDetail
+	} from '$lib/api';
 	import CheckTable from '$lib/components/CheckTable.svelte';
+	import LogViewer from '$lib/components/LogViewer.svelte';
 	import ReportCard from '$lib/components/ReportCard.svelte';
 	import Timeline from '$lib/components/Timeline.svelte';
+	import { isTerminalState, streamRunEvents, type SseEvent, type StreamStatus } from '$lib/sse';
 
 	const runId = $derived(page.params.id ?? '');
+
+	const steps = [
+		{ label: 'Preparing', stage: 'preparing' },
+		{ label: 'Implementing', stage: 'implementing' },
+		{ label: 'Validating', stage: 'validating' },
+		{ label: 'Publishing', stage: 'publishing' },
+		{ label: 'Reporting', stage: 'reporting' }
+	];
+
+	type ActivityLine = { seq: number; at: string; message: string; severity: string };
 
 	let run = $state<RunDetail | null>(null);
 	let problem = $state<Problem | null>(null);
 	let loading = $state(false);
+	let activity = $state<ActivityLine[]>([]);
+	let streamStatus = $state<StreamStatus>('closed');
+	let confirmCancel = $state(false);
+	let cancelling = $state(false);
+	let cancelProblem = $state<Problem | null>(null);
+	let now = $state(Date.now());
+
+	let teardown: (() => void) | null = null;
+	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+	const currentStep = $derived(
+		Math.max(stepIndexFromState(run?.state), stepIndexFromStage(run?.stage))
+	);
+
+	const elapsedLabel = $derived.by(() => {
+		if (!run) {
+			return '—';
+		}
+		const start = Date.parse(run.startedAt ?? run.createdAt ?? '');
+		if (Number.isNaN(start)) {
+			return '—';
+		}
+		const finish = run.endedAt ? Date.parse(run.endedAt) : now;
+		return durationLabel(Math.max(0, finish - start));
+	});
+
+	const summary = $derived(run ? describeOutcome(run) : null);
 
 	$effect(() => {
 		const id = runId;
@@ -18,13 +64,42 @@
 			return;
 		}
 		void load(id);
+		return () => {
+			stopStream();
+			if (refreshTimer) {
+				clearTimeout(refreshTimer);
+				refreshTimer = null;
+			}
+		};
+	});
+
+	$effect(() => {
+		const interval = setInterval(() => {
+			now = Date.now();
+		}, 1000);
+		return () => clearInterval(interval);
 	});
 
 	async function load(id: string) {
 		loading = true;
 		problem = null;
 		try {
-			run = await getRun(id);
+			const detail = await getRun(id);
+			if (id !== runId) {
+				return;
+			}
+			applyRun(detail);
+			activity = (detail.timeline ?? [])
+				.filter((event) => event.type === 'activity')
+				.map((event) => ({
+					seq: event.seq,
+					at: event.at,
+					message: event.message,
+					severity: event.severity
+				}));
+			if (!isTerminalState(detail.state)) {
+				startStream(id);
+			}
 		} catch (error) {
 			run = null;
 			problem =
@@ -39,6 +114,225 @@
 						};
 		} finally {
 			loading = false;
+		}
+	}
+
+	function startStream(id: string) {
+		stopStream();
+		teardown = streamRunEvents(
+			id,
+			{
+				onStatus: (status) => {
+					streamStatus = status;
+				},
+				onEvent: (event) => handleEvent(id, event),
+				onTerminal: (state) => {
+					if (run) {
+						run.state = state as RunDetail['state'];
+					}
+					scheduleRefresh(id);
+				}
+			},
+			{ maxAttempts: 5 }
+		);
+	}
+
+	function stopStream() {
+		if (teardown) {
+			teardown();
+			teardown = null;
+		}
+		streamStatus = 'closed';
+	}
+
+	function handleEvent(id: string, event: SseEvent) {
+		const data = event.data;
+
+		if (event.type === 'activity') {
+			const message = typeof data.message === 'string' ? data.message : '';
+			if (message && !activity.some((line) => line.seq === event.id)) {
+				activity = [
+					...activity,
+					{
+						seq: event.id,
+						at: data.at ?? new Date().toISOString(),
+						message,
+						severity: data.severity ?? 'info'
+					}
+				].slice(-200);
+			}
+			return;
+		}
+
+		if (event.type === 'state' && typeof data.state === 'string') {
+			if (run) {
+				run.state = data.state as RunDetail['state'];
+				if (typeof data.stage === 'string') {
+					run.stage = data.stage;
+				}
+			}
+			scheduleRefresh(id);
+			return;
+		}
+
+		if (event.type === 'stage' && typeof data.stage === 'string') {
+			if (run) {
+				run.stage = data.stage;
+			}
+			return;
+		}
+
+		if (['check', 'publish', 'report', 'workspace', 'agent'].includes(event.type)) {
+			scheduleRefresh(id);
+		}
+	}
+
+	function scheduleRefresh(id: string) {
+		if (refreshTimer) {
+			clearTimeout(refreshTimer);
+		}
+		refreshTimer = setTimeout(() => {
+			refreshTimer = null;
+			void refresh(id);
+		}, 300);
+	}
+
+	async function refresh(id: string) {
+		if (id !== runId) {
+			return;
+		}
+		try {
+			applyRun(await getRun(id));
+		} catch {
+			// Keep the last good view; the stream remains the source of progress.
+		}
+	}
+
+	function applyRun(latest: RunDetail) {
+		// A refresh can race the terminal transition. Never let a stale read pull
+		// the view back out of a terminal state.
+		if (run && isTerminalState(run.state) && !isTerminalState(latest.state)) {
+			return;
+		}
+		run = latest;
+		if (isTerminalState(latest.state)) {
+			stopStream();
+		}
+	}
+
+	async function confirmCancellation(id: string) {
+		cancelling = true;
+		cancelProblem = null;
+		try {
+			const updated = await cancelRun(id);
+			run = mergeRun(run, updated);
+			confirmCancel = false;
+			stopStream();
+			scheduleRefresh(id);
+		} catch (error) {
+			cancelProblem =
+				error instanceof ApiError
+					? error.problem
+					: {
+							type: 'about:blank',
+							title: 'Cancellation failed',
+							status: 0,
+							code: 'unexpected',
+							detail: 'The worker did not accept the cancellation.'
+						};
+		} finally {
+			cancelling = false;
+		}
+	}
+
+	function mergeRun(current: RunDetail | null, update: Run): RunDetail | null {
+		if (!current) {
+			return current;
+		}
+		return { ...current, ...update } as RunDetail;
+	}
+
+	function stepIndexFromState(state?: string): number {
+		switch (state) {
+			case 'queued':
+			case 'preparing':
+				return 0;
+			case 'implementing':
+				return 1;
+			case 'validating':
+			case 'repairing':
+				return 2;
+			case 'publishing':
+				return 3;
+			case 'reporting':
+			case 'completed':
+				return 4;
+			default:
+				return -1;
+		}
+	}
+
+	function stepIndexFromStage(stage?: string): number {
+		if (!stage) {
+			return -1;
+		}
+		if (stage.startsWith('checks.')) {
+			return 2;
+		}
+		if (stage.startsWith('commit.') || stage.startsWith('branch.')) {
+			return 3;
+		}
+		if (stage.startsWith('mr.') || stage.startsWith('comment.') || stage.startsWith('report.')) {
+			return 4;
+		}
+		if (stage.startsWith('agent.') || stage.startsWith('workspace.')) {
+			return 1;
+		}
+		if (stage.startsWith('connectivity.')) {
+			return 0;
+		}
+		return -1;
+	}
+
+	function describeOutcome(detail: RunDetail): { headline: string; next: string } {
+		const failure = detail.failureMessage ?? '';
+		switch (detail.state) {
+			case 'completed':
+				return {
+					headline: detail.commitSha
+						? 'Every required check passed and the work was committed.'
+						: 'The run completed without a commit.',
+					next: detail.mergeRequestUrl
+						? 'Review the merge request; a human decides whether it is merged.'
+						: 'Open the changed files below. The branch was not published.'
+				};
+			case 'cancelled':
+				return {
+					headline: 'This run was cancelled. Nothing further was published.',
+					next:
+						'The workspace keeps any unpushed work, so start a new run only when you are ready. Completed side effects are never rolled back.'
+				};
+			case 'blocked':
+				return {
+					headline: failure || 'The agent stopped because the issue needs an answer.',
+					next: 'Answer the blocker on the issue, then start a new run.'
+				};
+			case 'interrupted':
+				return {
+					headline: 'The worker stopped while this run was active.',
+					next: 'Review the workspace, then retry explicitly. An interrupted run never resumes into a push.'
+				};
+			case 'failed':
+				return {
+					headline: failure || 'The run failed.',
+					next:
+						'Open the check results, the agent attempts, and the log tail below; then fix the cause and start a new run.'
+				};
+			default:
+				return {
+					headline: 'This run is still in progress.',
+					next: 'You can leave this page open: the timeline updates as the worker advances.'
+				};
 		}
 	}
 
@@ -59,10 +353,7 @@
 		}
 	}
 
-	function elapsed(milliseconds?: number): string {
-		if (!milliseconds || milliseconds <= 0) {
-			return '—';
-		}
+	function durationLabel(milliseconds: number): string {
 		const seconds = Math.round(milliseconds / 1000);
 		if (seconds < 60) {
 			return `${seconds}s`;
@@ -71,8 +362,23 @@
 		return `${minutes}m ${seconds % 60}s`;
 	}
 
+	function elapsed(milliseconds?: number): string {
+		if (!milliseconds || milliseconds <= 0) {
+			return '—';
+		}
+		return durationLabel(milliseconds);
+	}
+
 	function shortRevision(value?: string): string {
 		return value ? value.slice(0, 12) : '—';
+	}
+
+	function time(value: string): string {
+		const parsed = new Date(value);
+		if (Number.isNaN(parsed.getTime())) {
+			return value;
+		}
+		return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 	}
 </script>
 
@@ -107,8 +413,78 @@
 			<div class="state-block">
 				<span class="state {run.state}" data-testid="run-state">{stateLabel(run.state)}</span>
 				<span class="stage" data-testid="run-stage">{run.stage}</span>
+				<span class="stream" data-testid="stream-status">
+					{#if isTerminalState(run.state)}
+						finished
+					{:else if streamStatus === 'open'}
+						live
+					{:else if streamStatus === 'reconnecting'}
+						reconnecting…
+					{:else}
+						connecting…
+					{/if}
+				</span>
 			</div>
 		</header>
+
+		<section class="live-bar">
+			<ol class="stepper" data-testid="stage-stepper">
+				{#each steps as step, index (step.stage)}
+					<li
+						class:done={index < currentStep}
+						class:current={index === currentStep}
+						aria-current={index === currentStep ? 'step' : undefined}
+					>
+						{step.label}
+					</li>
+				{/each}
+			</ol>
+			<div class="timer">
+				<span class="timer-label">Elapsed</span>
+				<span class="timer-value" data-testid="elapsed-timer">{elapsedLabel}</span>
+			</div>
+		</section>
+
+		{#if !isTerminalState(run.state)}
+			<div class="cancel-box">
+				{#if !confirmCancel}
+					<button
+						type="button"
+						class="danger"
+						data-testid="cancel-button"
+						onclick={() => (confirmCancel = true)}
+					>
+						Cancel run
+					</button>
+				{:else}
+					<div class="confirm" role="alertdialog" aria-label="Confirm cancellation">
+						<p>
+							Cancelling stops the agent and its child processes. Anything already completed stays
+							recorded, and nothing is pushed after you confirm.
+						</p>
+						<div class="confirm-actions">
+							<button
+								type="button"
+								class="danger"
+								data-testid="cancel-confirm"
+								disabled={cancelling}
+								onclick={() => confirmCancellation(runId)}
+							>
+								{cancelling ? 'Cancelling…' : 'Yes, cancel the run'}
+							</button>
+							<button type="button" class="ghost" onclick={() => (confirmCancel = false)}>
+								Keep running
+							</button>
+						</div>
+					</div>
+				{/if}
+				{#if cancelProblem}
+					<p class="cancel-error" role="alert" data-testid="cancel-problem">
+						{cancelProblem.title}: {cancelProblem.detail}
+					</p>
+				{/if}
+			</div>
+		{/if}
 
 		{#if run.failureCode}
 			<div class="banner" data-testid="failure-banner">
@@ -116,6 +492,35 @@
 				<p>{run.failureMessage || 'The run did not finish successfully.'}</p>
 			</div>
 		{/if}
+
+		{#if summary}
+			<section class="summary" data-testid="run-summary">
+				<div>
+					<h2>What happened</h2>
+					<p>{summary.headline}</p>
+				</div>
+				<div>
+					<h2>What to do next</h2>
+					<p>{summary.next}</p>
+				</div>
+			</section>
+		{/if}
+
+		<section class="block">
+			<h2>Activity</h2>
+			{#if activity.length === 0}
+				<p class="empty">No agent activity yet.</p>
+			{:else}
+				<ol class="activity" data-testid="activity-feed">
+					{#each activity as line (line.seq)}
+						<li class={line.severity}>
+							<span class="at">{time(line.at)}</span>
+							<span class="message">{line.message}</span>
+						</li>
+					{/each}
+				</ol>
+			{/if}
+		</section>
 
 		<dl class="facts">
 			<div>
@@ -155,10 +560,6 @@
 						<span class="muted">not created</span>
 					{/if}
 				</dd>
-			</div>
-			<div>
-				<dt>Elapsed</dt>
-				<dd>{elapsed(run.elapsedMs)}</dd>
 			</div>
 			<div>
 				<dt>Agent</dt>
@@ -239,6 +640,11 @@
 				commitSha={run.commitSha ?? ''}
 				mergeRequestUrl={run.mergeRequestUrl ?? ''}
 			/>
+		</section>
+
+		<section class="block">
+			<h2>Logs</h2>
+			<LogViewer runId={runId} />
 		</section>
 
 		<section class="block">
@@ -337,6 +743,171 @@
 		color: #6b7a8c;
 	}
 
+	.stream {
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: #6b7a8c;
+	}
+
+	.live-bar {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		flex-wrap: wrap;
+		border: 1px solid #e6eaf0;
+		border-radius: 0.5rem;
+		padding: 0.6rem 0.85rem;
+		background: #fbfcfd;
+	}
+
+	.stepper {
+		display: flex;
+		gap: 0.4rem;
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		flex-wrap: wrap;
+	}
+
+	.stepper li {
+		border-radius: 999px;
+		padding: 0.15rem 0.65rem;
+		font-size: 0.78rem;
+		border: 1px solid #d5dce4;
+		color: #6b7a8c;
+		background: #fff;
+	}
+
+	.stepper li.done {
+		border-color: #a9d4b4;
+		background: #edf7ef;
+		color: #1e6b3a;
+	}
+
+	.stepper li.current {
+		border-color: #10233f;
+		background: #10233f;
+		color: #fff;
+		font-weight: 600;
+	}
+
+	.timer {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+	}
+
+	.timer-label {
+		font-size: 0.7rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: #6b7a8c;
+	}
+
+	.timer-value {
+		font-size: 1.1rem;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.cancel-box {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	button {
+		font: inherit;
+		cursor: pointer;
+		border-radius: 0.4rem;
+		padding: 0.4rem 0.9rem;
+		border: 1px solid #c3ccd7;
+		background: #f5f7fa;
+	}
+
+	button.danger {
+		border-color: #e7b7b3;
+		background: #fdf1f0;
+		color: #7f1d17;
+		font-weight: 600;
+		align-self: flex-start;
+	}
+
+	button.ghost {
+		background: #fff;
+	}
+
+	.confirm {
+		border: 1px solid #e7b7b3;
+		background: #fdf1f0;
+		border-radius: 0.5rem;
+		padding: 0.7rem 0.9rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+	}
+
+	.confirm p {
+		margin: 0;
+		color: #5d1a15;
+		font-size: 0.86rem;
+	}
+
+	.confirm-actions {
+		display: flex;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	.cancel-error {
+		margin: 0;
+		color: #7f1d17;
+		font-size: 0.86rem;
+	}
+
+	.summary {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+		gap: 0.9rem;
+		padding: 0.75rem 0.9rem;
+		border: 1px solid #dbe2ea;
+		border-radius: 0.5rem;
+		background: #f7f9fb;
+	}
+
+	.summary p {
+		margin: 0;
+		color: #33475c;
+		font-size: 0.88rem;
+	}
+
+	.assurance {
+		margin: 0;
+		padding: 0.55rem 0.75rem;
+		border-radius: 0.4rem;
+		background: #eef3f9;
+		color: #274158;
+		font-size: 0.85rem;
+	}
+
+	.banner {
+		border: 1px solid #e7b7b3;
+		background: #fdf1f0;
+		border-radius: 0.5rem;
+		padding: 0.8rem 1rem;
+	}
+
+	.banner h2 {
+		color: #7f1d17;
+	}
+
+	.banner p {
+		margin: 0;
+		color: #5d1a15;
+	}
+
 	.facts {
 		display: flex;
 		flex-wrap: wrap;
@@ -367,31 +938,6 @@
 		font-weight: 500;
 	}
 
-	.assurance {
-		margin: 0;
-		padding: 0.55rem 0.75rem;
-		border-radius: 0.4rem;
-		background: #eef3f9;
-		color: #274158;
-		font-size: 0.85rem;
-	}
-
-	.banner {
-		border: 1px solid #e7b7b3;
-		background: #fdf1f0;
-		border-radius: 0.5rem;
-		padding: 0.8rem 1rem;
-	}
-
-	.banner h2 {
-		color: #7f1d17;
-	}
-
-	.banner p {
-		margin: 0;
-		color: #5d1a15;
-	}
-
 	.block {
 		border-top: 1px solid #e6eaf0;
 		padding-top: 0.85rem;
@@ -405,6 +951,47 @@
 		flex-direction: column;
 		gap: 0.2rem;
 		font-size: 0.85rem;
+	}
+
+	.activity {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		max-height: 16rem;
+		overflow: auto;
+		font-size: 0.85rem;
+	}
+
+	.activity li {
+		display: grid;
+		grid-template-columns: 5.5rem 1fr;
+		gap: 0.6rem;
+		padding: 0.25rem 0.4rem;
+		border-left: 3px solid #dbe2ea;
+		background: #fbfcfd;
+	}
+
+	.activity li.warn {
+		border-left-color: #d9a441;
+		background: #fdf9ee;
+	}
+
+	.activity li.error {
+		border-left-color: #b3261e;
+		background: #fdf1f0;
+	}
+
+	.activity .at {
+		color: #6b7a8c;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.activity .message {
+		color: #1b1f24;
+		word-break: break-word;
 	}
 
 	.invocations {

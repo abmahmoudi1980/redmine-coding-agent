@@ -23,12 +23,12 @@ func main() {
 
 	switch mode {
 	case "sleep":
-		time.Sleep(10 * time.Minute)
+		holdUntilKilled(workspace)
 		return
 	case "hang":
 		emit(map[string]any{"type": "activity", "message": "hanging on purpose"})
 		fmt.Println("waiting for cancellation")
-		time.Sleep(10 * time.Minute)
+		holdUntilKilled(workspace)
 		return
 	case "crash":
 		fmt.Fprintln(os.Stderr, "fakeagent: crashing without a result block")
@@ -62,6 +62,7 @@ func main() {
 		_ = os.WriteFile(target, []byte("escaped\n"), 0o600)
 		writeResult("done", "(none)", "(none)", "(none)")
 	case "grandchild":
+		writeChange(workspace, "work in progress when the operator cancelled")
 		// #nosec G204 G702 -- the fake agent re-executes its own binary for the containment test.
 		child := exec.Command(os.Args[0], "--mode", "sleep")
 		child.Stdout = os.Stdout
@@ -71,7 +72,7 @@ func main() {
 			os.Exit(1)
 		}
 		emit(map[string]any{"type": "activity", "message": fmt.Sprintf("spawned grandchild %d", child.Process.Pid)})
-		time.Sleep(10 * time.Minute)
+		holdUntilKilled(workspace)
 	default:
 		writeChange(workspace, "unknown mode fallback")
 		writeResult("done", "agent-change.txt", "(none)", "(none)")
@@ -113,6 +114,22 @@ func resolveMode(args []string) string {
 
 func writeChange(workspace, content string) {
 	_ = os.WriteFile(filepath.Join(workspace, "agent-change.txt"), []byte(content+"\n"), 0o600)
+}
+
+// heartbeatName is touched every 100 ms while the fake agent is alive. A test
+// can prove the whole process tree died by watching this file stop moving;
+// a single "survived" marker would only prove it had not woken up yet.
+const heartbeatName = ".fakeagent-heartbeat"
+
+// holdUntilKilled writes the heartbeat until something kills the process. The
+// bound keeps a stray process from running forever on a developer machine.
+func holdUntilKilled(workspace string) {
+	path := filepath.Join(workspace, heartbeatName)
+	deadline := time.Now().Add(10 * time.Minute)
+	for time.Now().Before(deadline) {
+		_ = os.WriteFile(path, []byte(time.Now().UTC().Format(time.RFC3339Nano)), 0o600)
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func writeResult(status, files, checks, blockers string) {

@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +20,7 @@ import (
 // RunService is the narrow orchestration surface the HTTP layer needs.
 type RunService interface {
 	Create(ctx context.Context, req runner.CreateRequest) (*domain.Run, error)
+	Cancel(ctx context.Context, publicID string) (run *domain.Run, changed bool, err error)
 }
 
 type createRunRequest struct {
@@ -142,6 +146,146 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Location", "/api/runs/"+created.PublicID)
 	s.writeJSON(w, http.StatusCreated, s.runDocumentFor(ctx, created))
+}
+
+// handleCancelRun asks the pipeline to stop and returns at once. The stream
+// reports the outcome; already-created side effects are never rolled back
+// (FR-012, FR-013, US4-AC4).
+func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
+	publicID := strings.TrimSpace(r.PathValue("runId"))
+	if publicID == "" {
+		s.writeProblem(w, http.StatusNotFound, "run_not_found", "No run matches that identifier.")
+		return
+	}
+	if s.runs == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "worker_not_ready", "The run pipeline is not wired in this process.")
+		return
+	}
+	if _, ok := s.runForRequest(w, r); !ok {
+		return
+	}
+
+	ctx, cancel := contextWithTimeout(r, 10*time.Second)
+	defer cancel()
+
+	run, changed, err := s.runs.Cancel(ctx, publicID)
+	switch {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+		s.writeProblem(w, http.StatusNotFound, "run_not_found", fmt.Sprintf("Run %s does not exist.", publicID))
+		return
+	case errors.Is(err, runner.ErrRunNotCancellable):
+		state := ""
+		if run != nil {
+			state = string(run.State)
+		}
+		detail := "The run has already finished, so there is nothing to cancel."
+		if state != "" {
+			detail = fmt.Sprintf("Run %s already finished in state %s.", publicID, state)
+		}
+		s.writeProblem(w, http.StatusConflict, "run_not_cancellable", detail)
+		return
+	default:
+		s.writeProblem(w, http.StatusInternalServerError, "internal_error", "The cancellation could not be recorded.")
+		return
+	}
+	if run == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "internal_error", "The cancellation could not be recorded.")
+		return
+	}
+
+	status := http.StatusAccepted
+	if !changed {
+		status = http.StatusOK
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	s.writeJSON(w, status, s.runDocumentFor(ctx, run))
+}
+
+// handleGetRunLogs tails the per-run log file. The file is redacted as it is
+// written, so the tail needs no second scrub (T103).
+func (s *Server) handleGetRunLogs(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.runForRequest(w, r)
+	if !ok {
+		return
+	}
+	if s.logger == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "worker_not_ready", "Log files are not configured in this process.")
+		return
+	}
+
+	tail := 500
+	if raw := strings.TrimSpace(r.URL.Query().Get("tail")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			s.writeProblem(w, http.StatusBadRequest, "invalid_tail", "The tail size must be a positive integer.")
+			return
+		}
+		if parsed > 5000 {
+			parsed = 5000
+		}
+		tail = parsed
+	}
+
+	lines, err := tailFile(s.logger.RunLogPath(run.PublicID), tail)
+	if errors.Is(err, os.ErrNotExist) {
+		s.writeProblem(w, http.StatusGone, "logs_pruned", "The log file for this run was pruned; the timeline is still available.")
+		return
+	}
+	if err != nil {
+		s.writeProblem(w, http.StatusInternalServerError, "internal_error", "The log file could not be read.")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"lines": lines})
+}
+
+// maxLogTailBytes bounds how much of a log file is read from the end.
+const maxLogTailBytes = 2 << 20
+
+// tailFile returns the last n lines, oldest first.
+func tailFile(path string, n int) ([]string, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, os.ErrNotExist
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := info.Size()
+	offset := int64(0)
+	if size > maxLogTailBytes {
+		offset = size - maxLogTailBytes
+	}
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return nil, err
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+
+	text := strings.TrimRight(string(content), "\r\n")
+	if text == "" {
+		return []string{}, nil
+	}
+	all := strings.Split(text, "\n")
+	if offset > 0 && len(all) > 0 {
+		// The first line of a partial read is very likely cut in half.
+		all = all[1:]
+	}
+	for index := range all {
+		all[index] = strings.TrimRight(all[index], "\r")
+	}
+	if n > 0 && len(all) > n {
+		all = all[len(all)-n:]
+	}
+	return all, nil
 }
 
 // handleGetRunReport returns the stored report even when its Redmine delivery

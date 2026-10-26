@@ -14,6 +14,8 @@ import (
 	"sync"
 
 	_ "modernc.org/sqlite" // Blank import registers the pure-Go SQLite driver.
+
+	"github.com/systemgroup/redmine-coding-agent/internal/domain"
 )
 
 // Redactor scrubs secret values from text before it is persisted.
@@ -32,12 +34,55 @@ type Store struct {
 	read     *sql.DB
 	redactor Redactor
 
+	sinkMu sync.RWMutex
+	sink   EventSink
+
 	closeOnce sync.Once
 	closeErr  error
 }
 
+// EventSink receives every persisted timeline row after its transaction
+// commits. The API's SSE hub is the only production implementation; a nil sink
+// simply means nobody is listening.
+type EventSink func(runID int64, event domain.RunEvent)
+
 // Option customises Open.
 type Option func(*Store)
+
+// WithEventSink installs a live tail for persisted run events. Rows are only
+// delivered after the write transaction commits, so a rollback never reaches a
+// subscriber.
+func WithEventSink(sink EventSink) Option {
+	return func(s *Store) {
+		s.sink = sink
+	}
+}
+
+// SetEventSink installs or replaces the live tail. It is safe to call while
+// runs are in flight.
+func (s *Store) SetEventSink(sink EventSink) {
+	if s == nil {
+		return
+	}
+	s.sinkMu.Lock()
+	defer s.sinkMu.Unlock()
+	s.sink = sink
+}
+
+func (s *Store) publishEvents(pending []pendingEvent) {
+	if s == nil || len(pending) == 0 {
+		return
+	}
+	s.sinkMu.RLock()
+	sink := s.sink
+	s.sinkMu.RUnlock()
+	if sink == nil {
+		return
+	}
+	for _, item := range pending {
+		sink(item.RunID, item.Event)
+	}
+}
 
 // WithRedactor installs the secret scrubber used on persisted text.
 func WithRedactor(r Redactor) Option {
@@ -151,7 +196,14 @@ func (s *Store) Path() string { return s.path }
 
 // Tx is the subset of *sql.Tx used by store methods.
 type Tx struct {
-	tx *sql.Tx
+	tx      *sql.Tx
+	pending []pendingEvent
+}
+
+// pendingEvent is a timeline row waiting for the transaction to commit.
+type pendingEvent struct {
+	RunID int64
+	Event domain.RunEvent
 }
 
 func (t *Tx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
@@ -174,7 +226,8 @@ func (s *Store) InTx(ctx context.Context, fn func(*Tx) error) error {
 	if err != nil {
 		return fmt.Errorf("store: begin: %w", err)
 	}
-	if err := fn(&Tx{tx: tx}); err != nil {
+	scoped := &Tx{tx: tx}
+	if err := fn(scoped); err != nil {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
 			return fmt.Errorf("%w (rollback: %v)", err, rollbackErr)
 		}
@@ -183,6 +236,7 @@ func (s *Store) InTx(ctx context.Context, fn func(*Tx) error) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit: %w", err)
 	}
+	s.publishEvents(scoped.pending)
 	return nil
 }
 
