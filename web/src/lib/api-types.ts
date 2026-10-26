@@ -521,7 +521,7 @@ export interface components {
             kind: "implement" | "repair";
             /** @example opencode */
             adapter: string;
-            /** @example anthropic/claude-sonnet-4 */
+            /** @example opencode-go/deepseek-v4.1-flash */
             model: string;
             /** @enum {string} */
             status: "running" | "succeeded" | "failed" | "timed_out" | "cancelled" | "blocked";

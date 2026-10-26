@@ -779,7 +779,7 @@ components:
         attemptNo: { type: integer, minimum: 1 }
         kind: { type: string, enum: [implement, repair] }
         adapter: { type: string, example: opencode }
-        model: { type: string, example: anthropic/claude-sonnet-4 }
+        model: { type: string, example: opencode-go/deepseek-v4.1-flash }
         status: { type: string, enum: [running, succeeded, failed, timed_out, cancelled, blocked] }
         reportedStatus:
           type: string

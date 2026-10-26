@@ -219,6 +219,7 @@ func (r *Runner) create(ctx context.Context, req CreateRequest, opts createOptio
 			branch = opts.previous.Branch
 		}
 	}
+	branch = r.freeBranch(ctx, mapping.ID, branch)
 
 	repositoryID := mapping.ID
 	run := &domain.Run{

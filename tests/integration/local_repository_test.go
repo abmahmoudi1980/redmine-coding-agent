@@ -95,3 +95,30 @@ func TestLocalRepositoryWithoutPublishingKeepsTheCommitLocal(t *testing.T) {
 		t.Fatalf("origin branches = %v, want no pushed branch", branches)
 	}
 }
+
+// TestSecondRunForTheSameIssueUsesAFreeBranch is the recovery path a user hits
+// after a failed attempt: the first run's branch still exists, so a fresh run
+// must not collide with it and must not overwrite it.
+func TestSecondRunForTheSameIssueUsesAFreeBranch(t *testing.T) {
+	env := newPipeline(t, pipelineOptions{tune: publishDisabled})
+	env.harness.AddIssue(issueWithMode("ok"))
+
+	first := env.start(t, 4821)
+	if first.State != domain.StateCompleted {
+		t.Fatalf("first run state = %q (%s)", first.State, first.FailureMessage)
+	}
+	if first.Branch != "agent/issue-4821" {
+		t.Fatalf("first branch = %q", first.Branch)
+	}
+
+	second := env.start(t, 4821)
+	if second.State != domain.StateCompleted {
+		t.Fatalf("second run state = %q (%s)", second.State, second.FailureMessage)
+	}
+	if second.Branch != "agent/issue-4821-r2" {
+		t.Fatalf("second branch = %q, want agent/issue-4821-r2", second.Branch)
+	}
+	if second.CommitSHA == "" {
+		t.Fatal("the second run must create its own commit")
+	}
+}

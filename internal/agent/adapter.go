@@ -73,6 +73,9 @@ type Request struct {
 	Timeout      time.Duration
 	EnvAllowlist []string
 	PolicyFile   string
+	// InheritHome leaves HOME/XDG_CONFIG_HOME/XDG_DATA_HOME/XDG_CACHE_HOME
+	// untouched, so the agent can read its own configuration and credentials.
+	InheritHome bool
 }
 
 // Prompt is the exact text sent to the agent, hashed before the call.
@@ -111,6 +114,8 @@ type Result struct {
 	Summary          Summary
 	Activity         []ActivityEvent
 	PolicyViolations []string
+	// Error is the agent's own error message when it reported one.
+	Error string
 }
 
 // Registry maps the configured adapter name to its implementation.
@@ -232,6 +237,17 @@ func (l SandboxLayout) Redirects() map[string]string {
 	}
 }
 
+// TempRedirects keeps the temporary-directory redirects only. It is used when
+// the operator opted out of HOME isolation so the agent can read its own CLI
+// configuration and stored provider credentials.
+func (l SandboxLayout) TempRedirects() map[string]string {
+	return map[string]string{
+		"TMPDIR": l.Temp,
+		"TEMP":   l.Temp,
+		"TMP":    l.Temp,
+	}
+}
+
 // ValidateRequest enforces A1–A3 and creates the sandbox tree. It is pure
 // filesystem work: no agent process is started.
 func ValidateRequest(req Request, workspaceRoot string) (SandboxLayout, error) {
@@ -279,6 +295,9 @@ func ValidateRequest(req Request, workspaceRoot string) (SandboxLayout, error) {
 // Credential-shaped variables are refused rather than silently scrubbed.
 func BuildEnvironment(req Request, layout SandboxLayout) ([]string, error) {
 	redirects := layout.Redirects()
+	if req.InheritHome {
+		redirects = layout.TempRedirects()
+	}
 	seen := make(map[string]bool, len(req.EnvAllowlist)+len(redirects))
 	out := make([]string, 0, len(req.EnvAllowlist)+len(redirects))
 

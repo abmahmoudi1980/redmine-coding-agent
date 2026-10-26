@@ -113,12 +113,13 @@ func (r *Runner) invoke(ctx context.Context, run *domain.Run, snapshot domain.Is
 		out := failureOutcome(domain.FailWorkspaceFailed, err.Error(), domain.AgentInvokedStage(attempt))
 		return invocation, &out
 	}
-	environment, err := agent.EnvironmentAllowlist(runtime.GOOS)
+	environment, err := agent.EnvironmentAllowlistWith(runtime.GOOS, r.config.Agent.EnvPassthrough)
 	if err != nil {
 		r.finishInvocation(ctx, invocation, "failed", nil, false, "", "")
 		out := failureOutcome(domain.FailAgentError, err.Error(), domain.AgentInvokedStage(attempt))
 		return invocation, &out
 	}
+	r.registerPassthroughSecrets(environment)
 
 	callCtx, cancel := context.WithTimeout(ctx, r.agent.Timeout)
 	defer cancel()
@@ -135,6 +136,7 @@ func (r *Runner) invoke(ctx context.Context, run *domain.Run, snapshot domain.Is
 		Timeout:      r.agent.Timeout,
 		EnvAllowlist: environment,
 		PolicyFile:   policyPath,
+		InheritHome:  !r.config.Agent.IsolateHome(),
 	})
 	// The policy is read-only while the agent runs; restore ownership of the
 	// sandbox afterwards so retention can delete the run directory (T134).
@@ -153,6 +155,25 @@ func (r *Runner) invoke(ctx context.Context, run *domain.Run, snapshot domain.Is
 		return invocation, out
 	}
 	return invocation, nil
+}
+
+// registerPassthroughSecrets registers the values of explicitly forwarded
+// variables with the redactor, so a proxy URL or provider key never reaches a
+// log, transcript, report, or response verbatim (FR-056).
+func (r *Runner) registerPassthroughSecrets(environment []string) {
+	if r.config == nil {
+		return
+	}
+	named := make(map[string]bool, len(r.config.Agent.EnvPassthrough))
+	for _, name := range r.config.Agent.EnvPassthrough {
+		named[strings.TrimSpace(name)] = true
+	}
+	for _, entry := range environment {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok && named[name] {
+			r.registerSecret(value)
+		}
+	}
 }
 
 // finishInvocation is a thin wrapper that keeps the write in one place.
@@ -288,6 +309,9 @@ func (r *Runner) outcomeForInvocation(result agent.Result, runErr error, attempt
 		return &out
 	case agent.StatusFailed:
 		message := fmt.Sprintf("The agent exited with code %d.", result.ExitCode)
+		if detail := strings.TrimSpace(result.Error); detail != "" {
+			message = fmt.Sprintf("The agent exited with code %d: %s", result.ExitCode, detail)
+		}
 		if runErr != nil {
 			message = runErr.Error()
 		}

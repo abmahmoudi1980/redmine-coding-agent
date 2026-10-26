@@ -151,6 +151,15 @@ var windowsEnvironment = []string{
 // EnvironmentAllowlist builds the KEY=VALUE allowlist for one invocation. The
 // sandbox redirects in BuildEnvironment take precedence over these values.
 func EnvironmentAllowlist(goos string) ([]string, error) {
+	return EnvironmentAllowlistWith(goos, nil)
+}
+
+// EnvironmentAllowlistWith also forwards explicitly named variables. Names in
+// passthrough are allowed even when they look like credentials, because the
+// operator listed them on purpose (for example HTTPS_PROXY or a provider key).
+// A name that is listed but unset is an error: silently dropping it would turn
+// a configuration mistake into a confusing agent failure.
+func EnvironmentAllowlistWith(goos string, passthrough []string) ([]string, error) {
 	names := append([]string{}, baseEnvironment...)
 	if goos == "" {
 		goos = runtime.GOOS
@@ -159,16 +168,40 @@ func EnvironmentAllowlist(goos string) ([]string, error) {
 		names = append(names, windowsEnvironment...)
 	}
 
-	allowlist := make([]string, 0, len(names))
-	for _, name := range names {
-		if credentialLike(name) {
-			continue
+	allowed := make(map[string]bool, len(names)+len(passthrough))
+	allowlist := make([]string, 0, len(names)+len(passthrough))
+	appendName := func(name string, force bool) error {
+		if allowed[name] {
+			return nil
+		}
+		if !force && credentialLike(name) {
+			return nil
 		}
 		value, ok := os.LookupEnv(name)
 		if !ok || strings.TrimSpace(value) == "" {
+			if force {
+				return fmt.Errorf("agent: agent.env_passthrough names %q, but it is empty in the worker environment", name)
+			}
+			return nil
+		}
+		allowed[name] = true
+		allowlist = append(allowlist, name+"="+value)
+		return nil
+	}
+
+	for _, name := range names {
+		if err := appendName(name, false); err != nil {
+			return nil, err
+		}
+	}
+	for _, name := range passthrough {
+		name = strings.TrimSpace(name)
+		if name == "" {
 			continue
 		}
-		allowlist = append(allowlist, name+"="+value)
+		if err := appendName(name, true); err != nil {
+			return nil, err
+		}
 	}
 	if len(allowlist) == 0 {
 		return nil, errors.New("agent: no safe environment variables are available")

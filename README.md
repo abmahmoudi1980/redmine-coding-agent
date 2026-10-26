@@ -108,7 +108,7 @@ If a build asks for `gcc`, a CGO-dependent package slipped in: that breaks the p
 | `gitlab.push_enabled` / `gitlab.merge_request_enabled` | global publishing policy |
 | `repositories[]` | `redmine_project` → `repository_path`, `base_branch`, `is_default`, optional `publish_enabled` / `merge_request_enabled`, and `checks[]`; `repository_path` is a GitLab project path **or** an absolute local directory |
 | `repositories[].checks[]` | `name`, `command_linux`, `command_windows`, `required` (default true), `timeout_seconds` |
-| `agent` | `adapter`, `model`, `profile`, `timeout_minutes`, `max_repairs` |
+| `agent` | `adapter`, `command`, `model`, `profile` (must name an installed agent — `opencode debug agents` lists them), `sandbox_home`, `env_passthrough`, `timeout_minutes`, `max_repairs` |
 | `concurrency.max_active_runs` | one active run by default |
 
 **Secrets are never literal values.** Use `env:NAME` or `file:/path`; they are resolved at use time, never logged, and scrubbed from every log line, transcript, report, and response by a redaction registry.
@@ -134,6 +134,25 @@ repositories:
 
 Local versus remote is decided by the path alone — a GitLab project path is
 relative by construction, a local repository path is absolute.
+
+### Agent credentials and proxies
+
+The agent runs with a scrubbed environment and a run-scoped `HOME`/`XDG` tree by
+default, so it cannot read your shell's credentials. That is the strict default,
+but a CLI that stores its provider login in your user profile (for example
+`opencode auth login`) and a corporate proxy both need a deliberate exception:
+
+```yaml
+agent:
+  sandbox_home: false        # let the agent read its own config/auth under your HOME
+  env_passthrough: ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"]
+```
+
+`env_passthrough` forwards exactly the names you list, even credential-like ones,
+and registers their values with the redactor. A name that is listed but unset
+fails the invocation with a clear message instead of being dropped silently.
+Both knobs weaken containment; leave them at their defaults on a hardened
+deployment (see `SECURITY.md`).
 
 ---
 

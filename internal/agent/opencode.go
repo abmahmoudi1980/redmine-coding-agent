@@ -154,6 +154,7 @@ func (o *OpenCode) Run(ctx context.Context, req Request) (Result, error) {
 	transcript := ParseTranscript(captured.String())
 	result.Activity = transcript.Activity
 	result.PolicyViolations = transcript.PolicyViolations
+	result.Error = transcript.Error
 
 	summary, parsed := ParseResultBlock(captured.String())
 	if parsed {

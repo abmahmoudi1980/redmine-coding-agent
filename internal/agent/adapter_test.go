@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -120,4 +121,51 @@ func (f *fakeAdapter) Probe(_ context.Context, _ agent.Config) (agent.ProbeResul
 
 func (f *fakeAdapter) Run(_ context.Context, _ agent.Request) (agent.Result, error) {
 	return agent.Result{Status: agent.StatusSucceeded}, nil
+}
+
+func TestInheritHomeKeepsTheOperatorHomeAndStillRedirectsTemp(t *testing.T) {
+	layout, err := agent.PrepareSandbox(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := agent.BuildEnvironment(agent.Request{InheritHome: true}, layout)
+	if err != nil {
+		t.Fatalf("BuildEnvironment: %v", err)
+	}
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "HOME=") {
+		t.Fatalf("HOME must be inherited, not set: %s", joined)
+	}
+	if strings.Contains(joined, "XDG_DATA_HOME=") {
+		t.Fatalf("XDG data must be inherited, not set: %s", joined)
+	}
+	if !strings.Contains(joined, "TMPDIR="+layout.Temp) {
+		t.Fatalf("TMPDIR must still point into the sandbox: %s", joined)
+	}
+}
+
+func TestEnvironmentAllowlistForwardsOnlyNamedVariables(t *testing.T) {
+	t.Setenv("RCA_PROXY", "http://127.0.0.1:10808")
+	t.Setenv("RCA_PROVIDER_API_KEY", "provider-secret-value")
+
+	env, err := agent.EnvironmentAllowlistWith(runtime.GOOS, []string{"RCA_PROXY", "RCA_PROVIDER_API_KEY"})
+	if err != nil {
+		t.Fatalf("EnvironmentAllowlistWith: %v", err)
+	}
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "RCA_PROXY=http://127.0.0.1:10808") {
+		t.Fatalf("the named proxy was not forwarded: %s", joined)
+	}
+	if !strings.Contains(joined, "RCA_PROVIDER_API_KEY=provider-secret-value") {
+		t.Fatalf("an explicitly named credential must be forwarded: %s", joined)
+	}
+	if strings.Contains(joined, "RCA_UNRELATED") {
+		t.Fatalf("unnamed variables must not be forwarded: %s", joined)
+	}
+}
+
+func TestEnvironmentAllowlistRejectsAMissingNamedVariable(t *testing.T) {
+	if _, err := agent.EnvironmentAllowlistWith(runtime.GOOS, []string{"RCA_DOES_NOT_EXIST"}); err == nil {
+		t.Fatal("a named but unset variable must be reported, not silently dropped")
+	}
 }

@@ -74,3 +74,22 @@ func TestParseTranscriptStopsAtTheActivityCap(t *testing.T) {
 		t.Fatalf("activity count = %d, want <= 500", len(transcript.Activity))
 	}
 }
+
+func TestParseTranscriptCapturesTheAgentError(t *testing.T) {
+	raw := `{"type":"error","timestamp":1793030518974,"error":{"type":"unknown","message":"Agent not found: \"restricted\""}}`
+
+	transcript := agent.ParseTranscript(raw)
+	if !strings.Contains(transcript.Error, `Agent not found: "restricted"`) {
+		t.Fatalf("error = %q", transcript.Error)
+	}
+	if len(transcript.Activity) != 1 || !strings.Contains(transcript.Activity[0].Message, "Agent not found") {
+		t.Fatalf("the failure must also be visible as activity: %+v", transcript.Activity)
+	}
+}
+
+func TestParseTranscriptTakesAPlainErrorString(t *testing.T) {
+	transcript := agent.ParseTranscript(`{"type":"error","error":"model is not available"}`)
+	if transcript.Error != "model is not available" {
+		t.Fatalf("error = %q", transcript.Error)
+	}
+}

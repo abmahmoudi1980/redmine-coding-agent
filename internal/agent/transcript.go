@@ -21,6 +21,9 @@ type Transcript struct {
 	Activity         []ActivityEvent
 	PolicyViolations []string
 	Warnings         []string
+	// Error is the last error the agent itself reported, so a failed
+	// invocation can name the cause instead of only its exit code.
+	Error string
 }
 
 var policyViolationTypes = map[string]bool{
@@ -62,8 +65,14 @@ func ParseTranscript(text string) Transcript {
 			stringField(event, "message"),
 			stringField(event, "text"),
 			stringField(event, "summary"),
+			nestedError(event),
 			describeToolEvent(event),
 		)
+		if strings.EqualFold(kind, "error") {
+			if detail := firstNonEmpty(nestedError(event), message); detail != "" {
+				transcript.Error = detail
+			}
+		}
 
 		if policyViolationTypes[strings.ToLower(kind)] || truthy(event["permission_denied"]) {
 			violation := strings.TrimSpace(message)
@@ -91,6 +100,22 @@ func ParseTranscript(text string) Transcript {
 		})
 	}
 	return transcript
+}
+
+// nestedError reads the message out of an event shaped like
+// {"type":"error","error":{"type":"unknown","message":"..."}}.
+func nestedError(event map[string]any) string {
+	raw, ok := event["error"]
+	if !ok {
+		return ""
+	}
+	switch typed := raw.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]any:
+		return stringField(typed, "message")
+	}
+	return ""
 }
 
 func describeToolEvent(event map[string]any) string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/systemgroup/redmine-coding-agent/internal/domain"
@@ -89,6 +90,41 @@ func (r *Runner) retryBranch(ctx context.Context, previous *domain.Run, attempt 
 		return git.AttemptBranch(issueBranch, attempt)
 	}
 	return plan.Branch
+}
+
+// freeBranch returns a branch name that no local branch in the mirror still
+// holds. An existing branch belongs to an earlier attempt whose work is never
+// overwritten, so the next free attempt suffix is used instead (FR-052). A
+// mirror that has not been created yet simply means the branch is free.
+func (r *Runner) freeBranch(ctx context.Context, repositoryID int64, branch string) string {
+	branch = strings.TrimSpace(branch)
+	if r.git == nil || branch == "" || repositoryID <= 0 {
+		return branch
+	}
+	if taken, err := r.git.LocalBranchExists(ctx, repositoryID, branch); err != nil || !taken {
+		return branch
+	}
+	base := trimAttemptSuffix(branch)
+	for attempt := 2; attempt < 52; attempt++ {
+		candidate := git.AttemptBranch(base, attempt)
+		if taken, err := r.git.LocalBranchExists(ctx, repositoryID, candidate); err == nil && !taken {
+			return candidate
+		}
+	}
+	return branch
+}
+
+// trimAttemptSuffix removes a trailing "-rN" so repeated collisions do not grow
+// names like agent/issue-7-r2-r2.
+func trimAttemptSuffix(branch string) string {
+	index := strings.LastIndex(branch, "-r")
+	if index <= 0 {
+		return branch
+	}
+	if _, err := strconv.Atoi(branch[index+2:]); err != nil {
+		return branch
+	}
+	return branch[:index]
 }
 
 // attemptNumber is 1 for an original run and grows along the retry chain.

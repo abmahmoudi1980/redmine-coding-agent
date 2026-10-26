@@ -267,3 +267,27 @@ func TestHalfConfiguredGitLabIsRejected(t *testing.T) {
 		t.Fatalf("a token-less GitLab section must be rejected: %v", err)
 	}
 }
+
+func TestAgentContainmentDefaultsAndPassthroughValidation(t *testing.T) {
+	cfg := decodeValid(t)
+	if !cfg.Agent.IsolateHome() {
+		t.Fatal("sandbox_home must default to true")
+	}
+
+	off := false
+	cfg.Agent.SandboxHome = &off
+	if cfg.Agent.IsolateHome() {
+		t.Fatal("an explicit sandbox_home: false must be honoured")
+	}
+
+	cfg.Agent.EnvPassthrough = []string{"HTTPS_PROXY"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a valid passthrough name must be accepted: %v", err)
+	}
+
+	cfg.Agent.EnvPassthrough = []string{"NOT-A-NAME"}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "env_passthrough") {
+		t.Fatalf("an invalid passthrough name must be rejected: %v", err)
+	}
+}

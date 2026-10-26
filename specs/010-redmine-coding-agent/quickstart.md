@@ -89,8 +89,10 @@ repositories:
 
 agent:
   adapter: "opencode"
-  model: "anthropic/claude-sonnet-4"
-  profile: "restricted"          # the policy written into the sandbox
+  model: "opencode-go/deepseek-v4.1-flash"
+  profile: "build"               # must name an existing opencode agent
+  # sandbox_home: false          # needed when the CLI stores its login under your HOME
+  # env_passthrough: ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"]
   timeout_minutes: 45
   max_repairs: 1
 

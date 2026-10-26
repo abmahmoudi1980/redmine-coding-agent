@@ -302,6 +302,25 @@ func (m *Manager) BranchExists(ctx context.Context, workspace, branch string) (b
 	return local, remote, nil
 }
 
+// LocalBranchExists reports whether the mirror cache still holds a local branch.
+// A fresh run uses this to avoid reusing a branch that belongs to an earlier
+// attempt: that branch may hold work the worker refuses to overwrite (FR-052).
+func (m *Manager) LocalBranchExists(ctx context.Context, repositoryID int64, branch string) (bool, error) {
+	if strings.TrimSpace(branch) == "" {
+		return false, errors.New("git: branch is required")
+	}
+	mirror, err := m.MirrorPath(repositoryID)
+	if err != nil {
+		return false, err
+	}
+	if _, statErr := os.Stat(filepath.Join(mirror, "HEAD")); statErr != nil {
+		return false, nil
+	}
+	unlock := m.locks.Lock(repositoryID)
+	defer unlock()
+	return m.mirrorRefExists(ctx, mirror, "refs/heads/"+branch), nil
+}
+
 // AttemptBranch is the branch name for one attempt. Attempt 1 uses the issue
 // branch unchanged; a retry that must not overwrite an earlier attempt gets a
 // stable attempt suffix (FR-052, R18).

@@ -131,6 +131,22 @@ type Agent struct {
 	Profile        string `yaml:"profile" json:"profile"`
 	TimeoutMinutes int    `yaml:"timeout_minutes" json:"timeoutMinutes"`
 	MaxRepairs     int    `yaml:"max_repairs" json:"maxRepairs"`
+	// SandboxHome defaults to true: the agent gets a run-scoped HOME/XDG tree.
+	// Setting it to false lets the agent read the operator's own CLI
+	// configuration and stored provider credentials (weaker containment).
+	SandboxHome *bool `yaml:"sandbox_home" json:"sandboxHome,omitempty"`
+	// EnvPassthrough names worker environment variables forwarded to the agent
+	// verbatim, for example a corporate proxy or a provider key. Explicit
+	// names override the "credential-like" filter, so use it deliberately.
+	EnvPassthrough []string `yaml:"env_passthrough" json:"envPassthrough,omitempty"`
+}
+
+// IsolateHome defaults to true: silence must not weaken containment.
+func (a Agent) IsolateHome() bool {
+	if a.SandboxHome == nil {
+		return true
+	}
+	return *a.SandboxHome
 }
 
 type Concurrency struct {

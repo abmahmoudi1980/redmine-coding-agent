@@ -66,6 +66,16 @@ func (c *Config) Validate() error {
 	if c.Agent.MaxRepairs < 0 {
 		problems = append(problems, errors.New("agent.max_repairs must be zero or positive"))
 	}
+	for index, name := range c.Agent.EnvPassthrough {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			problems = append(problems, fmt.Errorf("agent.env_passthrough[%d] must name an environment variable", index))
+			continue
+		}
+		if !validEnvName(name) {
+			problems = append(problems, fmt.Errorf("agent.env_passthrough[%d] %q is not a valid environment variable name", index, name))
+		}
+	}
 
 	if c.Concurrency.MaxActiveRuns < 1 {
 		problems = append(problems, errors.New("concurrency.max_active_runs must be at least 1"))
@@ -186,6 +196,20 @@ func (c *Config) validateRepositories() []error {
 		}
 	}
 	return problems
+}
+
+// validEnvName accepts the portable subset of environment variable names.
+func validEnvName(name string) bool {
+	for index, r := range name {
+		switch {
+		case r == '_':
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9' && index > 0:
+		default:
+			return false
+		}
+	}
+	return name != ""
 }
 
 func validateBaseURL(key, raw string) error {

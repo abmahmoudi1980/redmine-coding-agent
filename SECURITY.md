@@ -30,7 +30,7 @@ JSON-escaped variants and replaces every variant with `***`.
 | Run events (`run_events.message/data`) | `store` redacts on write | `internal/store` |
 | Validation output excerpts | `validate.Runner` scrubs before persisting | `internal/validate` |
 | Agent prompt | built from non-secret config + issue snapshot only | `internal/agent/prompt_test.go` |
-| Agent environment | allowlist; credential-like names dropped; `HOME`/`TMPDIR` redirected | `internal/agent/sandbox.go` |
+| Agent environment | allowlist; credential-like names dropped unless named in `agent.env_passthrough`; `HOME`/`TMPDIR` redirected unless `agent.sandbox_home: false` | `internal/agent/sandbox.go` |
 | HTTP responses | `redactingResponseWriter` buffers JSON/text bodies before flush | `internal/api` |
 | SSE events | events are redacted at the source (store write) | `internal/api/events_test.go` |
 | Reports | rendered from already-redacted run facts; persisted through the redacting store | `internal/runner/report_test.go` |

@@ -6,6 +6,7 @@ import (
 	"github.com/systemgroup/redmine-coding-agent/internal/config"
 	"strings"
 
+	"github.com/systemgroup/redmine-coding-agent/internal/agent"
 	"github.com/systemgroup/redmine-coding-agent/internal/domain"
 	"github.com/systemgroup/redmine-coding-agent/internal/gitlab"
 )
@@ -88,5 +89,28 @@ func TestLocalRepositoryPushesButNeverOpensAMergeRequest(t *testing.T) {
 	}
 	if got := runner.remoteLabel(mapping); !strings.Contains(got, "local repository") {
 		t.Errorf("remoteLabel = %q", got)
+	}
+}
+
+// A failed invocation must name the agent's own error, not only its exit code.
+func TestAgentFailureMessageCarriesTheAgentError(t *testing.T) {
+	runner := &Runner{}
+	out := runner.outcomeForInvocation(agent.Result{
+		Status:   agent.StatusFailed,
+		ExitCode: 1,
+		Error:    `Agent not found: "restricted"`,
+	}, nil, 1)
+
+	if out == nil || out.Failure == nil {
+		t.Fatal("a failed invocation must produce a failure outcome")
+	}
+	if out.Failure.Code != domain.FailAgentError {
+		t.Fatalf("code = %q", out.Failure.Code)
+	}
+	if !strings.Contains(out.Failure.Message, `Agent not found: "restricted"`) {
+		t.Fatalf("message = %q", out.Failure.Message)
+	}
+	if !strings.Contains(out.Failure.Message, "code 1") {
+		t.Fatalf("message must keep the exit code: %q", out.Failure.Message)
 	}
 }

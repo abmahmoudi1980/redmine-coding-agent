@@ -45,8 +45,16 @@ repositories:
 
 agent:
   adapter: "opencode"
-  model: "anthropic/claude-sonnet-4"
-  profile: "restricted"
+  model: "opencode-go/deepseek-v4.1-flash"
+  profile: "build"                 # must name an installed agent (opencode debug agents)
+  # Containment knobs. The defaults are the strict ones:
+  #   sandbox_home: true        the agent gets a run-scoped HOME/XDG tree and
+  #                             cannot read your CLI config or stored credentials
+  #   env_passthrough: []       nothing extra is forwarded to the agent process
+  # A provider that authenticates through your user profile, or a corporate
+  # proxy, needs both relaxed deliberately:
+  # sandbox_home: false
+  # env_passthrough: ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"]
   timeout_minutes: 45
   max_repairs: 1
 
