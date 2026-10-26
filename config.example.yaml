@@ -1,0 +1,48 @@
+schema_version: 1
+
+http:
+  listen: "127.0.0.1:8080"
+
+data:
+  database: "./data/agent.db"
+  workspace_root: "./data/workspaces"
+  log_dir: "./data/logs"
+  retention_days: 7
+
+redmine:
+  base_url: "https://redmine.internal"
+  api_key: "env:REDMINE_API_KEY"
+  comment_on_finish: true
+  update_status: false
+
+gitlab:
+  base_url: "https://gitlab.internal"
+  token: "env:GITLAB_TOKEN"
+  push_enabled: true
+  merge_request_enabled: true
+
+repositories:
+  - redmine_project: "billing"
+    repository_path: "group/billing-api"
+    base_branch: "main"
+    is_default: true
+    checks:
+      - name: "unit-tests"
+        command_linux: "go test ./..."
+        command_windows: "go test ./..."
+        required: true
+        timeout_seconds: 900
+      - name: "lint"
+        command_linux: "golangci-lint run"
+        command_windows: "golangci-lint run"
+        required: false
+
+agent:
+  adapter: "opencode"
+  model: "anthropic/claude-sonnet-4"
+  profile: "restricted"
+  timeout_minutes: 45
+  max_repairs: 1
+
+concurrency:
+  max_active_runs: 1

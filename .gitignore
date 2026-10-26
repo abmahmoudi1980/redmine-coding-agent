@@ -1,0 +1,45 @@
+# Go build and test artifacts
+/bin/
+/data/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/vendor/
+coverage.out
+coverage.html
+go.work
+go.work.sum
+
+# Frontend build output
+web/node_modules/
+web/build/
+web/.svelte-kit/
+web/playwright-report/
+web/test-results/
+web/coverage/
+node_modules/
+
+# Embedded frontend: keep the committed placeholder, ignore real build artifacts
+internal/web/dist/*
+!internal/web/dist/index.html
+
+# Local configuration and credentials
+config.yaml
+config.local.yaml
+.env
+.env.*
+.opencode/
+*.pem
+*.key
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+.vscode/
+.idea/
