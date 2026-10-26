@@ -80,6 +80,11 @@ func (m *Manager) MirrorPath(repositoryID int64) (string, error) {
 
 // EnsureMirror clones a bare mirror the first time and refreshes it afterwards.
 // The repository lock is held across the fetch so two runs cannot race.
+//
+// The cache is a mirror for fetching but a normal remote for pushing: a
+// `--mirror` clone cannot push an explicit refspec, and mirroring into
+// refs/heads/* fails as soon as a branch is checked out in a live worktree. The
+// fetch refspec therefore targets refs/remotes/origin/* only.
 func (m *Manager) EnsureMirror(ctx context.Context, repositoryID int64, remoteURL string) (string, error) {
 	if strings.TrimSpace(remoteURL) == "" {
 		return "", errors.New("git: remote URL is required")
@@ -92,6 +97,9 @@ func (m *Manager) EnsureMirror(ctx context.Context, repositoryID int64, remoteUR
 	defer unlock()
 
 	if _, statErr := os.Stat(filepath.Join(mirror, "HEAD")); statErr == nil {
+		if err := m.normalizeMirrorConfig(ctx, mirror); err != nil {
+			return "", fmt.Errorf("git: prepare mirror %d: %w", repositoryID, err)
+		}
 		if _, err := m.git(ctx, mirror, "fetch", "--prune", "origin"); err != nil {
 			return "", fmt.Errorf("git: refresh mirror %d: %w", repositoryID, err)
 		}
@@ -109,7 +117,25 @@ func (m *Manager) EnsureMirror(ctx context.Context, repositoryID int64, remoteUR
 	if _, err := m.git(ctx, "", "clone", "--mirror", remoteURL, mirror); err != nil {
 		return "", fmt.Errorf("git: clone mirror %d: %w", repositoryID, err)
 	}
+	if err := m.normalizeMirrorConfig(ctx, mirror); err != nil {
+		return "", fmt.Errorf("git: prepare mirror %d: %w", repositoryID, err)
+	}
+	if _, err := m.git(ctx, mirror, "fetch", "--prune", "origin"); err != nil {
+		return "", fmt.Errorf("git: prime mirror %d: %w", repositoryID, err)
+	}
 	return mirror, nil
+}
+
+// normalizeMirrorConfig turns the clone from a pushing mirror into a cache that
+// tracks branches under refs/remotes/origin, which is what AddWorktree and Push
+// expect. It is idempotent, so an older cache is upgraded on the next refresh.
+func (m *Manager) normalizeMirrorConfig(ctx context.Context, mirror string) error {
+	// The key is absent once normalized; a failing unset is expected.
+	_, _ = m.git(ctx, mirror, "config", "--unset-all", "remote.origin.mirror")
+	if _, err := m.git(ctx, mirror, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // AddWorktree creates a dedicated branch and checkout for one run.
@@ -140,13 +166,24 @@ func (m *Manager) AddWorktree(ctx context.Context, repositoryID int64, workspace
 		return fmt.Errorf("git: inspect workspace: %w", statErr)
 	}
 
-	if _, err := m.git(ctx, mirror, "worktree", "add", "-b", branch, workspace, baseBranch); err != nil {
+	base := m.resolveBaseRef(ctx, mirror, baseBranch)
+	if _, err := m.git(ctx, mirror, "worktree", "add", "-b", branch, workspace, base); err != nil {
 		if strings.Contains(err.Error(), "already exists") {
 			return fmt.Errorf("%w: %s", ErrBranchExists, branch)
 		}
 		return fmt.Errorf("git: add worktree: %w", err)
 	}
 	return nil
+}
+
+// resolveBaseRef prefers the freshly fetched remote-tracking branch, falling
+// back to a local branch when the mirror has no tracking ref for it.
+func (m *Manager) resolveBaseRef(ctx context.Context, mirror, baseBranch string) string {
+	tracking := "refs/remotes/origin/" + baseBranch
+	if _, err := m.git(ctx, mirror, "rev-parse", "--verify", "--quiet", tracking); err == nil {
+		return tracking
+	}
+	return baseBranch
 }
 
 // Head is the fully resolved commit at the workspace HEAD.

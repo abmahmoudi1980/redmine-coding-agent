@@ -31,6 +31,7 @@ import (
 const (
 	fixtureRedmineKey  = "fixture-redmine-key"
 	fixtureGitLabToken = "fixture-gitlab-token" // #nosec G101 -- fake token for an httptest server
+	billingProjectID   = 101
 )
 
 // Harness is one isolated end-to-end environment.
@@ -83,7 +84,7 @@ func New(t testing.TB) *Harness {
 	}
 
 	h.Origin = NewOrigin(t, root)
-	h.GitLab.AddProject("group/billing-api", 101, h.Origin.Path)
+	h.GitLab.AddProject("group/billing-api", billingProjectID, h.Origin.Path)
 	h.Redmine.AddIssue(defaultIssue())
 
 	h.Config = h.defaultConfig()
@@ -603,6 +604,26 @@ func (f *GitLabFake) MergeCalls() int {
 	return f.mergeCalls
 }
 
+// PreregisterMergeRequest seeds an open merge request so idempotent reuse can
+// be exercised (FR-043).
+func (f *GitLabFake) PreregisterMergeRequest(sourceBranch, targetBranch, title, description string) MergeRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	mergeRequest := MergeRequest{
+		IID:          f.nextIID,
+		ProjectID:    billingProjectID,
+		SourceBranch: sourceBranch,
+		TargetBranch: targetBranch,
+		Title:        title,
+		Description:  description,
+		State:        "opened",
+		WebURL:       fmt.Sprintf("%s/group/billing-api/-/merge_requests/%d", f.server.URL, f.nextIID),
+	}
+	f.nextIID++
+	f.mergeReqs = append(f.mergeReqs, mergeRequest)
+	return mergeRequest
+}
+
 func (f *GitLabFake) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("PRIVATE-TOKEN") != f.token {
 		w.Header().Set("Content-Type", "application/json")
@@ -894,6 +915,31 @@ func (o *Origin) CommitSeed(t testing.TB, name string, content []byte) string {
 	gitCommand(t, o.SeedDir, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "commit", "-m", "update "+name)
 	gitCommand(t, o.SeedDir, "push", "origin", "main")
 	return strings.TrimSpace(gitOutput(t, o.Path, "rev-parse", "main"))
+}
+
+// RefusePushes installs a pre-receive hook that rejects every push, so the
+// push-rejection path can be exercised without a real remote.
+func (o *Origin) RefusePushes(t testing.TB) {
+	t.Helper()
+	hooks := filepath.Join(o.Path, "hooks")
+	if err := os.MkdirAll(hooks, 0o750); err != nil {
+		t.Fatalf("create hooks dir: %v", err)
+	}
+	hook := filepath.Join(hooks, "pre-receive")
+	// #nosec G306 -- a git hook must be executable by the git process.
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatalf("write pre-receive hook: %v", err)
+	}
+}
+
+// Branches lists the branch refs currently on the origin.
+func (o *Origin) Branches(t testing.TB) []string {
+	t.Helper()
+	output := strings.TrimSpace(gitOutput(t, o.Path, "for-each-ref", "--format=%(refname:short)", "refs/heads/"))
+	if output == "" {
+		return nil
+	}
+	return strings.Split(output, "\n")
 }
 
 func gitCommand(t testing.TB, dir string, args ...string) {

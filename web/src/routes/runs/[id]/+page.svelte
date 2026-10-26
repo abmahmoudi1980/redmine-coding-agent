@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { ApiError, getRun, type Problem, type RunDetail } from '$lib/api';
 	import CheckTable from '$lib/components/CheckTable.svelte';
+	import ReportCard from '$lib/components/ReportCard.svelte';
 	import Timeline from '$lib/components/Timeline.svelte';
 
 	const runId = $derived(page.params.id ?? '');
@@ -134,6 +135,28 @@
 				<dd>{run.commitSha ? shortRevision(run.commitSha) : 'none'}</dd>
 			</div>
 			<div>
+				<dt>Published</dt>
+				<dd>
+					{#if run.pushedAt}
+						<span data-testid="pushed-at">branch pushed</span>
+					{:else}
+						<span class="muted">not pushed</span>
+					{/if}
+				</dd>
+			</div>
+			<div>
+				<dt>Merge request</dt>
+				<dd>
+					{#if run.mergeRequestUrl}
+						<a href={run.mergeRequestUrl} target="_blank" rel="noreferrer" data-testid="merge-request-link">
+							review it
+						</a>
+					{:else}
+						<span class="muted">not created</span>
+					{/if}
+				</dd>
+			</div>
+			<div>
 				<dt>Elapsed</dt>
 				<dd>{elapsed(run.elapsedMs)}</dd>
 			</div>
@@ -144,7 +167,8 @@
 		</dl>
 
 		<p class="assurance">
-			Nothing is merged and the base branch is never written. Only a dedicated branch is created.
+			Nothing is merged and the base branch is never written. Only a dedicated branch is pushed, and the
+			merge request waits for a human to review and merge it.
 		</p>
 
 		<section class="block">
@@ -202,6 +226,19 @@
 				blocks the commit.
 			</p>
 			<CheckTable checks={run.checks ?? []} />
+		</section>
+
+		<section class="block">
+			<h2>Publish and report</h2>
+			<p class="note">
+				The branch was pushed only because every required check passed. The merge request targets
+				<code>{run.baseBranch || 'the base branch'}</code> and is never merged by this tool.
+			</p>
+			<ReportCard
+				report={run.report ?? null}
+				commitSha={run.commitSha ?? ''}
+				mergeRequestUrl={run.mergeRequestUrl ?? ''}
+			/>
 		</section>
 
 		<section class="block">

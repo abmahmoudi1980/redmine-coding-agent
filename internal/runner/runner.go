@@ -332,6 +332,7 @@ func (r *Runner) settle(ctx context.Context, run *domain.Run, out outcome, log *
 			"run_id", run.PublicID, "state", out.State, "error", err)
 		return
 	}
+	r.persistFallbackReport(ctx, run, out)
 	if out.Failure != nil {
 		r.logger.Base().Info("run failed",
 			"run_id", run.PublicID, "code", out.Failure.Code, "stage", stage,

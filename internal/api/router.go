@@ -91,8 +91,8 @@ func (s *Server) Routes() []Route {
 		{http.MethodGet, "/api/runs/{runId}", "getRun", s.handleGetRun},
 		{http.MethodPost, "/api/runs/{runId}/cancel", "cancelRun", s.notImplemented("cancelRun")},
 		{http.MethodPost, "/api/runs/{runId}/retry", "retryRun", s.notImplemented("retryRun")},
-		{http.MethodGet, "/api/runs/{runId}/checks", "getRunChecks", s.notImplemented("getRunChecks")},
-		{http.MethodGet, "/api/runs/{runId}/report", "getRunReport", s.notImplemented("getRunReport")},
+		{http.MethodGet, "/api/runs/{runId}/checks", "getRunChecks", s.handleGetRunChecks},
+		{http.MethodGet, "/api/runs/{runId}/report", "getRunReport", s.handleGetRunReport},
 		{http.MethodGet, "/api/runs/{runId}/logs", "getRunLogs", s.notImplemented("getRunLogs")},
 		{http.MethodGet, "/api/runs/{runId}/events", "streamRunEvents", s.notImplemented("streamRunEvents")},
 	}

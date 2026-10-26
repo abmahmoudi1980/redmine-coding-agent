@@ -144,6 +144,78 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusCreated, s.runDocumentFor(ctx, created))
 }
 
+// handleGetRunReport returns the stored report even when its Redmine delivery
+// failed, so the text is never lost (FR-044, FR-047).
+func (s *Server) handleGetRunReport(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.runForRequest(w, r)
+	if !ok {
+		return
+	}
+
+	ctx, cancel := contextWithTimeout(r, 10*time.Second)
+	defer cancel()
+
+	report, err := s.store.GetReport(ctx, run.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeJSON(w, http.StatusOK, map[string]any{"report": nil})
+		return
+	}
+	if err != nil {
+		s.writeProblem(w, http.StatusInternalServerError, "internal_error", "The report could not be read.")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"report": report})
+}
+
+// handleGetRunChecks returns the per-attempt check grouping (FR-034).
+func (s *Server) handleGetRunChecks(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.runForRequest(w, r)
+	if !ok {
+		return
+	}
+
+	ctx, cancel := contextWithTimeout(r, 10*time.Second)
+	defer cancel()
+
+	attempts, err := s.store.CheckAttempts(ctx, run.ID)
+	if err != nil {
+		s.writeProblem(w, http.StatusInternalServerError, "internal_error", "The check results could not be read.")
+		return
+	}
+	if attempts == nil {
+		attempts = []domain.CheckAttempt{}
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"attempts": attempts})
+}
+
+// runForRequest resolves the {runId} path value and writes a problem when the
+// run does not exist or the database is unavailable.
+func (s *Server) runForRequest(w http.ResponseWriter, r *http.Request) (*domain.Run, bool) {
+	publicID := strings.TrimSpace(r.PathValue("runId"))
+	if publicID == "" {
+		s.writeProblem(w, http.StatusNotFound, "run_not_found", "No run matches that identifier.")
+		return nil, false
+	}
+	if s.store == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "worker_not_ready", "The database is not available in this process.")
+		return nil, false
+	}
+
+	ctx, cancel := contextWithTimeout(r, 10*time.Second)
+	defer cancel()
+
+	run, err := s.store.GetRunByPublicID(ctx, publicID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			s.writeProblem(w, http.StatusNotFound, "run_not_found", fmt.Sprintf("Run %s does not exist.", publicID))
+			return nil, false
+		}
+		s.writeProblem(w, http.StatusInternalServerError, "internal_error", "The run could not be read.")
+		return nil, false
+	}
+	return run, true
+}
+
 // handleGetRun returns the full audit view of one run (FR-048, SC-011).
 func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	publicID := strings.TrimSpace(r.PathValue("runId"))

@@ -11,6 +11,8 @@ export type RunDetail = components['schemas']['RunDetail'];
 export type ValidationResult = components['schemas']['ValidationResult'];
 export type RunEvent = components['schemas']['RunEvent'];
 export type AgentInvocation = components['schemas']['AgentInvocation'];
+export type Report = components['schemas']['Report'];
+export type CheckAttempt = components['schemas']['CheckAttempt'];
 
 /** ApiError carries the RFC 9457 problem document when the worker sent one. */
 export class ApiError extends Error {
@@ -126,4 +128,20 @@ export function createRun(input: {
 /** getRun returns the full audit view of one run. */
 export function getRun(runId: string): Promise<RunDetail> {
 	return request<RunDetail>(`/api/runs/${encodeURIComponent(runId)}`);
+}
+
+/** getRunReport returns the stored report, or null when none exists yet (FR-047). */
+export async function getRunReport(runId: string): Promise<Report | null> {
+	const payload = await request<{ report: Report | null }>(
+		`/api/runs/${encodeURIComponent(runId)}/report`
+	);
+	return payload.report ?? null;
+}
+
+/** getRunChecks returns the check results grouped by attempt. */
+export async function getRunChecks(runId: string): Promise<CheckAttempt[]> {
+	const payload = await request<{ attempts: CheckAttempt[] }>(
+		`/api/runs/${encodeURIComponent(runId)}/checks`
+	);
+	return payload.attempts ?? [];
 }

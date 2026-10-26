@@ -185,8 +185,49 @@ func TestEnsureMirrorRefreshes(t *testing.T) {
 	if _, err := manager.EnsureMirror(ctx, 3, origin); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if got := gitRun(t, mirror, "rev-parse", "main"); got != newTip {
-		t.Fatalf("mirror main = %s, want %s", got, newTip)
+	// The cache tracks branches under refs/remotes/origin so a live worktree can
+	// never block a refresh; that tracking ref is what worktrees are based on.
+	if got := gitRun(t, mirror, "rev-parse", "refs/remotes/origin/main"); got != newTip {
+		t.Fatalf("mirror origin/main = %s, want %s", got, newTip)
+	}
+}
+
+func TestPushedBranchReachesOriginAndSurvivesRefresh(t *testing.T) {
+	origin, initialRevision, base := newOrigin(t)
+	manager, workspaceRoot := newManager(t, base)
+	ctx := context.Background()
+	if _, err := manager.EnsureMirror(ctx, 4, origin); err != nil {
+		t.Fatal(err)
+	}
+
+	workspace := filepath.Join(workspaceRoot, "run-push")
+	if err := manager.AddWorktree(ctx, 4, workspace, "agent/issue-42", "main"); err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "change.txt"), []byte("pushed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.AddAll(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := manager.Commit(ctx, workspace, "Issue #42: change")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Push(ctx, workspace, "agent/issue-42"); err != nil {
+		t.Fatalf("Push from a mirror worktree: %v", err)
+	}
+
+	if tip := gitRun(t, origin, "rev-parse", "agent/issue-42"); tip != commit {
+		t.Fatalf("origin branch = %s, want %s", tip, commit)
+	}
+	if tip := gitRun(t, origin, "rev-parse", "main"); tip != initialRevision {
+		t.Fatalf("the base branch moved to %s", tip)
+	}
+
+	// A refresh while the branch is checked out in a worktree must still work.
+	if _, err := manager.EnsureMirror(ctx, 4, origin); err != nil {
+		t.Fatalf("refresh after push: %v", err)
 	}
 }
 

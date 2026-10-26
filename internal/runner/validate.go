@@ -65,7 +65,7 @@ func (r *Runner) validateAndCommit(ctx context.Context, run *domain.Run, snapsho
 		}
 	}
 
-	return r.commit(ctx, run, mapping, workspace, log, publishEnabled)
+	return r.commit(ctx, run, snapshot, mapping, workspace, log, publishEnabled)
 }
 
 func (r *Runner) runChecks(ctx context.Context, run *domain.Run, checks []domain.CheckDefinition, workspace *domain.Workspace, invocation *domain.AgentInvocation, attempt int, log *logging.RunLog) []domain.ValidationResult {
@@ -166,7 +166,7 @@ func (r *Runner) validationFailed(ctx context.Context, run *domain.Run, attempt 
 	return failureOutcome(domain.FailValidationFailed, message, domain.StageChecksFinished)
 }
 
-func (r *Runner) commit(ctx context.Context, run *domain.Run, mapping domain.RepositoryMapping, workspace *domain.Workspace, log *logging.RunLog, publishEnabled bool) outcome {
+func (r *Runner) commit(ctx context.Context, run *domain.Run, snapshot domain.IssueSnapshot, mapping domain.RepositoryMapping, workspace *domain.Workspace, log *logging.RunLog, publishEnabled bool) outcome {
 	if err := r.git.AddAll(ctx, workspace.Path); err != nil {
 		return failureOutcome(domain.FailWorkspaceFailed, err.Error(), domain.StageChecksFinished)
 	}
@@ -194,6 +194,10 @@ func (r *Runner) commit(ctx context.Context, run *domain.Run, mapping domain.Rep
 	}
 
 	if !publishEnabled {
+		r.event(ctx, run, domain.RunEvent{
+			Type:    domain.EventPublish,
+			Message: "publishing is disabled for this repository: the commit stays local and no branch is pushed",
+		})
 		return outcome{State: domain.StateCompleted, Stage: domain.StageCommitCreated, Conditions: domain.Conditions{PublishingEnabled: false}}
 	}
 
@@ -201,7 +205,7 @@ func (r *Runner) commit(ctx context.Context, run *domain.Run, mapping domain.Rep
 		"validation passed and the commit exists; publishing begins"); out != nil {
 		return *out
 	}
-	return outcome{}
+	return r.publishAndReport(ctx, run, snapshot, mapping, workspace, log)
 }
 
 // publishEnabled resolves the global and per-repository policy (FR-042).

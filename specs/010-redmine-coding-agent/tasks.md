@@ -194,21 +194,21 @@ Single Go module at the repository root, with the SPA in `web/`:
 
 ### Tests for User Story 3
 
-- [ ] T082 [P] [US3] Write `internal/gitlab/client_test.go`: token sent as `PRIVATE-TOKEN`, project path URL-encoded, MR lookup by `source_branch`+`target_branch` reuses an existing MR, and no merge endpoint is ever called
-- [ ] T083 [P] [US3] Write `internal/runner/report_test.go`: the rendered report contains terminal status, change summary, branch, commit, MR link, validation results, blockers, and duration; the `dedupe_key` marker is stable for the same outcome and changes when the commit changes (FR-044, FR-045)
-- [ ] T084 [P] [US3] Write `tests/integration/publish_test.go`: push happens only after a passing validation; publishing disabled ⇒ `completed` with `skipped`; MR creation reuses rather than duplicates; a rejected push keeps the local commit and reports `push_rejected`; a failed comment keeps the report body (FR-039, FR-042, FR-043, FR-047)
+- [X] T082 [P] [US3] Write `internal/gitlab/client_test.go`: token sent as `PRIVATE-TOKEN`, project path URL-encoded, MR lookup by `source_branch`+`target_branch` reuses an existing MR, and no merge endpoint is ever called
+- [X] T083 [P] [US3] Write `internal/runner/report_test.go`: the rendered report contains terminal status, change summary, branch, commit, MR link, validation results, blockers, and duration; the `dedupe_key` marker is stable for the same outcome and changes when the commit changes (FR-044, FR-045)
+- [X] T084 [P] [US3] Write `tests/integration/publish_test.go`: push happens only after a passing validation; publishing disabled ⇒ `completed` with `skipped`; MR creation reuses rather than duplicates; a rejected push keeps the local commit and reports `push_rejected`; a failed comment keeps the report body (FR-039, FR-042, FR-043, FR-047)
 
 ### Implementation for User Story 3
 
-- [ ] T085 [P] [US3] Implement `internal/gitlab/client.go`: `GET /projects/:id`, `POST /projects/:id/merge_requests`, `GET /projects/:id/merge_requests?source_branch&target_branch&state=opened`, and `PUT` for reuse — deliberately no merge or branch-delete methods
-- [ ] T086 [US3] Implement `internal/runner/publish.go`: transition to `publishing`, push the branch only when validation passed and no cancel is requested, record `pushed_at`, and on push rejection preserve the commit locally while ending `failed`/`push_rejected` (FR-039)
-- [ ] T087 [US3] Implement MR creation/reuse in `internal/runner/publish.go`: build the description with the fixed section order (issue reference and subject, implementation summary, notable changed files, validation commands and results, known limitations, manual follow-up), target `base_branch`, and reuse an existing open MR for the same branches (FR-040, FR-043)
-- [ ] T088 [US3] Implement publish policy gating: `publish_enabled`/`merge_request_enabled` (global and per repository) cause `skipped` steps, not failures, and `validating → completed` when nothing needs publishing (FR-042)
-- [ ] T089 [US3] Implement `internal/runner/report.go`: render the final report markdown from the run, commit, MR, and check results; persist it to `reports` even when delivery fails (FR-044, FR-047)
-- [ ] T090 [US3] Implement `internal/redmine/notes.go`: post the report as a journal note carrying the `dedupe_key` as an HTML-comment marker, skip when the marker already exists on the issue, and record `delivery_status`/`delivery_error` (FR-045, FR-046)
-- [ ] T091 [US3] Implement `GET /api/runs/{runId}/report` and `GET /api/runs/{runId}/checks` in `internal/api/runs.go`, returning the report and the per-attempt check grouping
-- [ ] T092 [P] [US3] Implement `web/src/lib/components/ReportCard.svelte`: markdown report with delivery state, MR link, commit link, and a visible warning when the Redmine comment failed
-- [ ] T093 [US3] Add the publish/report sections to `web/src/routes/runs/[id]/+page.svelte`: commit, branch, MR link, delivery status, and the "nothing was merged" assurance line (US3-AC4)
+- [X] T085 [P] [US3] Implement `internal/gitlab/client.go`: `GET /projects/:id`, `POST /projects/:id/merge_requests`, `GET /projects/:id/merge_requests?source_branch&target_branch&state=opened`, and `PUT` for reuse — deliberately no merge or branch-delete methods
+- [X] T086 [US3] Implement `internal/runner/publish.go`: transition to `publishing`, push the branch only when validation passed and no cancel is requested, record `pushed_at`, and on push rejection preserve the commit locally while ending `failed`/`push_rejected` (FR-039)
+- [X] T087 [US3] Implement MR creation/reuse in `internal/runner/publish.go`: build the description with the fixed section order (issue reference and subject, implementation summary, notable changed files, validation commands and results, known limitations, manual follow-up), target `base_branch`, and reuse an existing open MR for the same branches (FR-040, FR-043)
+- [X] T088 [US3] Implement publish policy gating: `publish_enabled`/`merge_request_enabled` (global and per repository) cause `skipped` steps, not failures, and `validating → completed` when nothing needs publishing (FR-042)
+- [X] T089 [US3] Implement `internal/runner/report.go`: render the final report markdown from the run, commit, MR, and check results; persist it to `reports` even when delivery fails (FR-044, FR-047)
+- [X] T090 [US3] Implement `internal/redmine/notes.go`: post the report as a journal note carrying the `dedupe_key` as an HTML-comment marker, skip when the marker already exists on the issue, and record `delivery_status`/`delivery_error` (FR-045, FR-046)
+- [X] T091 [US3] Implement `GET /api/runs/{runId}/report` and `GET /api/runs/{runId}/checks` in `internal/api/runs.go`, returning the report and the per-attempt check grouping
+- [X] T092 [P] [US3] Implement `web/src/lib/components/ReportCard.svelte`: markdown report with delivery state, MR link, commit link, and a visible warning when the Redmine comment failed
+- [X] T093 [US3] Add the publish/report sections to `web/src/routes/runs/[id]/+page.svelte`: commit, branch, MR link, delivery status, and the "nothing was merged" assurance line (US3-AC4)
 
 **Checkpoint**: A passing run now reaches a human reviewer with a complete, auditable paper trail.
 
