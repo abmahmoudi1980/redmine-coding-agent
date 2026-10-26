@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -21,6 +22,7 @@ type Manager struct {
 	mirrorsDir    string
 	workspaceRoot string
 	locks         *Locks
+	authHeader    string
 }
 
 // NewManager builds a manager. mirrorsDir is normally DefaultMirrorsDir(root).
@@ -38,6 +40,35 @@ func NewManager(mirrorsDir, workspaceRoot string) *Manager {
 
 // WorkspaceRoot is the configured root every worktree must stay inside.
 func (m *Manager) WorkspaceRoot() string { return m.workspaceRoot }
+
+// SetHTTPAuth configures HTTP basic credentials for network operations. The
+// header is passed through the child environment, never argv or a repository
+// config file, and callers must register the secret with the redactor (FR-056).
+func (m *Manager) SetHTTPAuth(username, password string) {
+	if username == "" && password == "" {
+		m.authHeader = ""
+		return
+	}
+	credentials := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	m.authHeader = "Authorization: Basic " + credentials
+}
+
+// WorktreeGitDir is the worktree's git directory, recorded so the working copy
+// can be audited after the fact.
+func (m *Manager) WorktreeGitDir(ctx context.Context, workspace string) (string, error) {
+	out, err := m.git(ctx, workspace, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", err
+	}
+	if out == "" {
+		return "", errors.New("git: worktree git directory is empty")
+	}
+	absolute, err := filepath.Abs(out)
+	if err != nil {
+		return "", fmt.Errorf("git: resolve worktree git directory: %w", err)
+	}
+	return absolute, nil
+}
 
 // MirrorPath is the bare mirror cache path for a repository.
 func (m *Manager) MirrorPath(repositoryID int64) (string, error) {
@@ -357,6 +388,14 @@ func (m *Manager) git(ctx context.Context, dir string, args ...string) (string, 
 	command := exec.CommandContext(ctx, m.gitBin, args...)
 	if dir != "" {
 		command.Dir = dir
+	}
+	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if m.authHeader != "" {
+		command.Env = append(command.Env,
+			"GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=http.extraHeader",
+			"GIT_CONFIG_VALUE_0="+m.authHeader,
+		)
 	}
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout

@@ -6,6 +6,11 @@ export type Repository = components['schemas']['Repository'];
 export type RepositoryOption = components['schemas']['RepositoryOption'];
 export type Problem = components['schemas']['Problem'];
 export type HealthReport = components['schemas']['HealthReport'];
+export type Run = components['schemas']['Run'];
+export type RunDetail = components['schemas']['RunDetail'];
+export type ValidationResult = components['schemas']['ValidationResult'];
+export type RunEvent = components['schemas']['RunEvent'];
+export type AgentInvocation = components['schemas']['AgentInvocation'];
 
 /** ApiError carries the RFC 9457 problem document when the worker sent one. */
 export class ApiError extends Error {
@@ -102,4 +107,23 @@ export async function listRepositories(project?: string): Promise<Repository[]> 
 /** getHealth reports worker and dependency liveness. */
 export function getHealth(): Promise<HealthReport> {
 	return request<HealthReport>('/api/health');
+}
+
+/** createRun starts the pipeline for a confirmed preview (FR-008). */
+export function createRun(input: {
+	issueId: number;
+	repositoryId?: number;
+	confirm: true;
+	commentIds?: number[];
+}): Promise<Run> {
+	return request<Run>('/api/runs', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(input)
+	});
+}
+
+/** getRun returns the full audit view of one run. */
+export function getRun(runId: string): Promise<RunDetail> {
+	return request<RunDetail>(`/api/runs/${encodeURIComponent(runId)}`);
 }

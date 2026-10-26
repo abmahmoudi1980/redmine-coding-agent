@@ -1,6 +1,14 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { tick } from 'svelte';
-	import { ApiError, previewIssue, type IssuePreview, type Problem } from '$lib/api';
+	import {
+		ApiError,
+		createRun,
+		previewIssue,
+		type IssuePreview,
+		type Problem
+	} from '$lib/api';
 	import IssueCard from '$lib/components/IssueCard.svelte';
 	import RepositoryPicker from '$lib/components/RepositoryPicker.svelte';
 
@@ -11,11 +19,10 @@
 	let candidates = $state<IssuePreview['candidates']>([]);
 	let selectedRepositoryId = $state<number | null>(null);
 	let loading = $state(false);
+	let starting = $state(false);
 	let inputEl = $state<HTMLInputElement | null>(null);
 
-	// Starting a run is wired in User Story 2; until then the control is inert.
-	const startImplemented = false;
-	const confirmDisabled = $derived(!startImplemented || preview === null || loading);
+	const confirmDisabled = $derived(preview === null || loading || starting);
 	const showRepository = $derived(preview !== null || (candidates?.length ?? 0) > 0);
 
 	function parseIssueId(value: string): number | null {
@@ -75,6 +82,36 @@
 	function chooseRepository(repositoryId: number) {
 		selectedRepositoryId = repositoryId;
 		void fetchPreview(repositoryId);
+	}
+
+	async function confirm() {
+		const issueId = parseIssueId(rawIssueId);
+		if (issueId === null || preview === null) {
+			return;
+		}
+		starting = true;
+		problem = null;
+		try {
+			const run = await createRun({
+				issueId,
+				repositoryId: selectedRepositoryId ?? preview.repository.repositoryId,
+				confirm: true
+			});
+			await goto(resolve('/runs/[id]', { id: run.runId }));
+		} catch (error) {
+			if (error instanceof ApiError) {
+				problem = error.problem;
+			} else {
+				problem = {
+					type: 'about:blank',
+					title: 'Unexpected error',
+					status: 0,
+					code: 'unexpected',
+					detail: 'The run could not be started. Try again.'
+				};
+			}
+			starting = false;
+		}
 	}
 
 	async function decline() {
@@ -141,6 +178,16 @@
 		{#if problem.stage}
 			<p class="problem-meta">Stage: {problem.stage}</p>
 		{/if}
+		{#if problem.activeRun?.runId}
+			<p class="problem-meta">
+				<a
+					href={resolve('/runs/[id]', { id: problem.activeRun.runId })}
+					data-testid="blocking-run-link"
+				>
+					Open the run that is already using this issue
+				</a>
+			</p>
+		{/if}
 	</div>
 {/if}
 
@@ -168,12 +215,18 @@
 
 {#if preview || problem}
 	<section class="controls">
-		<button type="button" class="confirm" disabled={confirmDisabled} title="Enabled in the next milestone">
-			Confirm and start
+		<button
+			type="button"
+			class="confirm"
+			disabled={confirmDisabled}
+			onclick={confirm}
+		>
+			{starting ? 'Starting…' : 'Confirm and start'}
 		</button>
-		<button type="button" class="decline" onclick={decline}>Decline</button>
+		<button type="button" class="decline" onclick={decline} disabled={starting}>Decline</button>
 		<p class="controls-note">
-			Starting a run arrives with the next milestone. Declining leaves no run, workspace, or branch.
+			The worker creates a dedicated branch and workspace. Nothing is written to the base branch, and
+			nothing is merged. Declining leaves no run, workspace, or branch.
 		</p>
 	</section>
 {/if}

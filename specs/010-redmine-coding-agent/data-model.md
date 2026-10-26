@@ -125,7 +125,7 @@ runs n───1 configuration_profiles   (effective non-secret config snapshot)
 
 1. `ux_runs_active_issue`: `CREATE UNIQUE INDEX ux_runs_active_issue ON runs(issue_id) WHERE state IN ('queued','preparing','implementing','repairing','validating','publishing','reporting');` → FR-010 at the storage layer.
 2. `ck_runs_ended`: `CHECK ((state IN ('completed','failed','blocked','cancelled','interrupted')) = (ended_at IS NOT NULL));`
-3. `CHECK (commit_sha IS NULL OR pushed_at IS NOT NULL OR state IN ('failed','blocked','cancelled','interrupted'));` — a commit may exist locally after a push rejection (spec edge case) while still being unpushed; this is expressed by `pushed_at` being null, not by hiding the commit.
+3. A local commit may exist without a push. `pushed_at IS NULL` is the record of that, and `workspaces.has_unpushed_changes` plus the cleanup refusal (FR-053) is what prevents losing the work. Two legitimate cases produce it: publishing disabled (FR-042) and a rejected push (spec edge case). Enforcing "a commit implies a push" at the database level would make `completed` with `publish_enabled: false` unrepresentable, which contradicts FR-038 and US2-AC4, so the constraint is deliberately not present.
 4. `CHECK (state <> 'cancelled' OR cancel_requested_at IS NOT NULL);` — cancellation is always requested, never inferred.
 5. No row may move out of a terminal state (enforced in code; `store` rejects the update).
 

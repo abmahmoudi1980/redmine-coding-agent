@@ -36,6 +36,7 @@ type Deps struct {
 	Logger   *logging.Logger
 	Redactor *logging.Redactor
 	Redmine  *redmine.Client
+	Runs     RunService
 	Build    BuildInfo
 }
 
@@ -46,6 +47,7 @@ type Server struct {
 	logger   *logging.Logger
 	redactor *logging.Redactor
 	redmine  *redmine.Client
+	runs     RunService
 	build    BuildInfo
 }
 
@@ -62,6 +64,7 @@ func NewServer(deps Deps) *Server {
 		logger:   deps.Logger,
 		redactor: redactor,
 		redmine:  deps.Redmine,
+		runs:     deps.Runs,
 		build:    deps.Build,
 	}
 }
@@ -83,9 +86,9 @@ func (s *Server) Routes() []Route {
 		{http.MethodGet, "/api/health", "getHealth", s.handleHealth},
 		{http.MethodGet, "/api/repositories", "listRepositories", s.handleListRepositories},
 		{http.MethodGet, "/api/issues/{issueId}/preview", "previewIssue", s.handlePreviewIssue},
-		{http.MethodPost, "/api/runs", "createRun", s.notImplemented("createRun")},
+		{http.MethodPost, "/api/runs", "createRun", s.handleCreateRun},
 		{http.MethodGet, "/api/runs", "listRuns", s.notImplemented("listRuns")},
-		{http.MethodGet, "/api/runs/{runId}", "getRun", s.notImplemented("getRun")},
+		{http.MethodGet, "/api/runs/{runId}", "getRun", s.handleGetRun},
 		{http.MethodPost, "/api/runs/{runId}/cancel", "cancelRun", s.notImplemented("cancelRun")},
 		{http.MethodPost, "/api/runs/{runId}/retry", "retryRun", s.notImplemented("retryRun")},
 		{http.MethodGet, "/api/runs/{runId}/checks", "getRunChecks", s.notImplemented("getRunChecks")},

@@ -506,3 +506,63 @@ func TestConfigurationProfileDedupe(t *testing.T) {
 }
 
 func stringPtr(value string) *string { return &value }
+
+func TestReserveRunEnforcesConcurrencyAndIssueUniqueness(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTestStore(t)
+
+	first := createRun(t, s, 5001, domain.StateQueued)
+
+	snapshot := createSnapshot(t, s, 5001)
+	duplicate := &domain.Run{
+		PublicID:        fmt.Sprintf("reserve-%d", publicIDCounter.Add(1)),
+		IssueID:         5001,
+		IssueSnapshotID: snapshot.ID,
+		CreatedAt:       time.Now().UTC(),
+	}
+	if err := s.ReserveRun(ctx, snapshot, duplicate, 2); !errors.Is(err, store.ErrActiveRunExists) {
+		t.Fatalf("second run for issue 5001: %v, want ErrActiveRunExists", err)
+	}
+
+	otherSnapshot := createSnapshot(t, s, 5002)
+	other := &domain.Run{
+		PublicID:        fmt.Sprintf("reserve-%d", publicIDCounter.Add(1)),
+		IssueID:         5002,
+		IssueSnapshotID: otherSnapshot.ID,
+		CreatedAt:       time.Now().UTC(),
+	}
+	if err := s.ReserveRun(ctx, otherSnapshot, other, 1); !errors.Is(err, store.ErrConcurrencyLimit) {
+		t.Fatalf("concurrency: %v, want ErrConcurrencyLimit", err)
+	}
+	if err := s.ReserveRun(ctx, otherSnapshot, other, 2); err != nil {
+		t.Fatalf("ReserveRun with a free slot: %v", err)
+	}
+	if other.ID == 0 || other.IssueSnapshotID != otherSnapshot.ID {
+		t.Fatalf("reserved run = %+v", other)
+	}
+
+	var count int
+	if err := s.Reader().QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE issue_id = 5002`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("issue 5002 has %d runs, want 1", count)
+	}
+
+	if err := s.TransitionRun(ctx, other.ID, store.Transition{To: domain.StateFailed, Stage: domain.StageCreated}); err != nil {
+		t.Fatalf("TransitionRun: %v", err)
+	}
+	if err := s.SetStage(ctx, first.ID, domain.StageConnectivityRedmine, domain.RunEvent{Message: "probing"}); err != nil {
+		t.Fatalf("SetStage: %v", err)
+	}
+	updated, err := s.GetRun(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Stage != domain.StageConnectivityRedmine {
+		t.Fatalf("stage = %q", updated.Stage)
+	}
+	if err := s.SetStage(ctx, other.ID, domain.StageChecksRunning, domain.RunEvent{Message: "too late"}); !errors.Is(err, store.ErrRunTerminal) {
+		t.Fatalf("SetStage on a terminal run: %v, want ErrRunTerminal", err)
+	}
+}

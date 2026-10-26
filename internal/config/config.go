@@ -2,6 +2,9 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -238,4 +241,15 @@ func (c *Config) RedactedDocument() map[string]any {
 		"concurrency":  c.Concurrency,
 	}
 	return doc
+}
+
+// ContentHash identifies the effective non-secret configuration. Two runs with
+// the same hash were produced by the same settings (FR-048).
+func (c *Config) ContentHash() string {
+	encoded, err := json.Marshal(c.RedactedDocument())
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
 }

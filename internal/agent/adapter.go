@@ -35,6 +35,14 @@ type Config struct {
 	Model         string
 	AgentName     string
 	WorkspaceRoot string
+	// Redactor scrubs every durable sink the adapter writes (A9). It is an
+	// interface so this package does not depend on the logging package.
+	Redactor Redactor
+}
+
+// Redactor is the minimum secret-scrubbing surface an adapter needs.
+type Redactor interface {
+	Redact(string) string
 }
 
 // ProbeResult reports whether the agent executable is usable.

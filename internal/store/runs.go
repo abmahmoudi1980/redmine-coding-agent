@@ -21,6 +21,14 @@ var ErrRunTerminal = errors.New("store: run is terminal")
 
 // CreateIssueSnapshot inserts an immutable issue copy.
 func (s *Store) CreateIssueSnapshot(ctx context.Context, snapshot *domain.IssueSnapshot) (int64, error) {
+	return insertIssueSnapshot(ctx, s.write, snapshot)
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func insertIssueSnapshot(ctx context.Context, exec execer, snapshot *domain.IssueSnapshot) (int64, error) {
 	if snapshot == nil {
 		return 0, errors.New("store: nil issue snapshot")
 	}
@@ -28,7 +36,7 @@ func (s *Store) CreateIssueSnapshot(ctx context.Context, snapshot *domain.IssueS
 	if fetchedAt.IsZero() {
 		fetchedAt = nowUTC()
 	}
-	result, err := s.write.ExecContext(ctx, `
+	result, err := exec.ExecContext(ctx, `
 		INSERT INTO issue_snapshots (
 			redmine_issue_id, subject, description, acceptance_criteria, criteria_source,
 			project_id, project_identifier, project_name, status_name, tracker_name,
@@ -102,6 +110,10 @@ func (s *Store) GetIssueSnapshot(ctx context.Context, id int64) (*domain.IssueSn
 // CreateRun inserts a run in queued/created unless the caller already set a
 // state. The partial unique index rejects a second active run for the issue.
 func (s *Store) CreateRun(ctx context.Context, run *domain.Run) (int64, error) {
+	return insertRun(ctx, s.write, run)
+}
+
+func insertRun(ctx context.Context, exec execer, run *domain.Run) (int64, error) {
 	if run == nil {
 		return 0, errors.New("store: nil run")
 	}
@@ -123,7 +135,7 @@ func (s *Store) CreateRun(ctx context.Context, run *domain.Run) (int64, error) {
 	if run.CreatedAt.IsZero() {
 		run.CreatedAt = nowUTC()
 	}
-	result, err := s.write.ExecContext(ctx, `
+	result, err := exec.ExecContext(ctx, `
 		INSERT INTO runs (
 			public_id, issue_id, issue_snapshot_id, repository_id, previous_run_id, state, stage,
 			base_branch, base_revision, branch, commit_sha, pushed_at, agent_name, agent_model,
@@ -160,6 +172,103 @@ const runSelect = `
 	       COALESCE(r.interrupted_stage, ''), COALESCE(r.failure_code, ''),
 	       COALESCE(r.failure_message, ''), COALESCE(r.summary, '')
 	FROM runs r JOIN issue_snapshots s ON s.id = r.issue_snapshot_id`
+
+// ErrActiveRunExists reports that the issue already has a non-terminal run
+// (FR-010).
+var ErrActiveRunExists = errors.New("store: issue already has an active run")
+
+// ErrConcurrencyLimit reports that the global active-run limit is reached
+// (FR-011).
+var ErrConcurrencyLimit = errors.New("store: concurrency limit reached")
+
+// ReserveRun atomically claims a concurrency slot and inserts the snapshot and
+// run. Both checks and both inserts happen inside one BEGIN IMMEDIATE
+// transaction, so two concurrent starts cannot both win.
+func (s *Store) ReserveRun(ctx context.Context, snapshot *domain.IssueSnapshot, run *domain.Run, maxActive int) error {
+	if snapshot == nil || run == nil {
+		return errors.New("store: reserve requires a snapshot and a run")
+	}
+	if maxActive < 1 {
+		maxActive = 1
+	}
+	return s.InTx(ctx, func(tx *Tx) error {
+		placeholders := activeStatePlaceholders()
+		args := make([]any, 0, len(domain.ActiveRunStates))
+		for _, state := range domain.ActiveRunStates {
+			args = append(args, string(state))
+		}
+
+		var active int
+		// #nosec G202 -- the clause is fixed and values stay in placeholders.
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM runs WHERE state IN (`+placeholders+`)`, args...).Scan(&active); err != nil {
+			return fmt.Errorf("store: count active runs: %w", err)
+		}
+		if active >= maxActive {
+			return ErrConcurrencyLimit
+		}
+
+		var existing int64
+		err := tx.QueryRowContext(ctx,
+			`SELECT id FROM runs WHERE issue_id = ? AND state IN (`+placeholders+`) LIMIT 1`,
+			append([]any{run.IssueID}, args...)...).Scan(&existing)
+		switch {
+		case err == nil:
+			return ErrActiveRunExists
+		case errors.Is(err, sql.ErrNoRows):
+		default:
+			return fmt.Errorf("store: active run lookup: %w", err)
+		}
+
+		if _, err := insertIssueSnapshot(ctx, tx, snapshot); err != nil {
+			return err
+		}
+		run.IssueSnapshotID = snapshot.ID
+		if _, err := insertRun(ctx, tx, run); err != nil {
+			if isUniqueViolation(err) {
+				return ErrActiveRunExists
+			}
+			return err
+		}
+		return nil
+	})
+}
+
+func isUniqueViolation(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "unique constraint") || strings.Contains(message, "constraint failed")
+}
+
+// SetStage records progress inside the current state without changing it.
+func (s *Store) SetStage(ctx context.Context, runID int64, stage domain.Stage, event domain.RunEvent) error {
+	if stage == "" {
+		return errors.New("store: stage is required")
+	}
+	return s.InTx(ctx, func(tx *Tx) error {
+		var state string
+		err := tx.QueryRowContext(ctx, `SELECT state FROM runs WHERE id = ?`, runID).Scan(&state)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("store: read run state: %w", err)
+		}
+		if domain.IsTerminal(domain.RunState(state)) {
+			return ErrRunTerminal
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE runs SET stage = ? WHERE id = ?`, string(stage), runID); err != nil {
+			return fmt.Errorf("store: set stage: %w", err)
+		}
+		if event.Type == "" {
+			event.Type = domain.EventStage
+		}
+		if event.Message == "" {
+			event.Message = "stage " + stage.String()
+		}
+		_, err = appendEvent(ctx, tx, runID, event, s.redact)
+		return err
+	})
+}
 
 // GetRun loads a run by its numeric primary key.
 func (s *Store) GetRun(ctx context.Context, id int64) (*domain.Run, error) {

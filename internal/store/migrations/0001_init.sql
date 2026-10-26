@@ -92,7 +92,6 @@ CREATE TABLE runs (
   failure_message TEXT,
   summary TEXT,
   CHECK ((state IN ('completed', 'failed', 'blocked', 'cancelled', 'interrupted')) = (ended_at IS NOT NULL)),
-  CHECK (commit_sha IS NULL OR pushed_at IS NOT NULL OR state IN ('failed', 'blocked', 'cancelled', 'interrupted')),
   CHECK (state <> 'cancelled' OR cancel_requested_at IS NOT NULL),
   CHECK (state <> 'interrupted' OR interrupted_stage IS NOT NULL)
 );

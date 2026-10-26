@@ -74,6 +74,10 @@ func TitleFor(code string) string {
 		return "Invalid issue number"
 	case "invalid_repository_id":
 		return "Invalid repository choice"
+	case "invalid_body":
+		return "Invalid request body"
+	case "confirmation_required":
+		return "Confirmation required"
 	case "worker_not_ready":
 		return "Worker not ready"
 	case "issue_not_found", "issue_inaccessible":
