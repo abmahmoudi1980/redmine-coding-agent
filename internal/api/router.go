@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/systemgroup/redmine-coding-agent/internal/config"
+	"github.com/systemgroup/redmine-coding-agent/internal/health"
 	"github.com/systemgroup/redmine-coding-agent/internal/logging"
 	"github.com/systemgroup/redmine-coding-agent/internal/redmine"
 	"github.com/systemgroup/redmine-coding-agent/internal/store"
@@ -38,6 +39,7 @@ type Deps struct {
 	Redmine  *redmine.Client
 	Runs     RunService
 	Hub      *Hub
+	Health   *health.Checker
 	Build    BuildInfo
 }
 
@@ -50,6 +52,7 @@ type Server struct {
 	redmine           *redmine.Client
 	runs              RunService
 	hub               *Hub
+	health            *health.Checker
 	build             BuildInfo
 	heartbeatInterval time.Duration
 }
@@ -77,6 +80,7 @@ func NewServer(deps Deps) *Server {
 		redmine:  deps.Redmine,
 		runs:     deps.Runs,
 		hub:      hub,
+		health:   deps.Health,
 		build:    deps.Build,
 	}
 }
@@ -93,8 +97,8 @@ type Route struct {
 // contract test that guards drift from contracts/openapi.yaml.
 func (s *Server) Routes() []Route {
 	return []Route{
-		{http.MethodGet, "/api/meta", "getMeta", s.notImplemented("getMeta")},
-		{http.MethodGet, "/api/config", "getEffectiveConfig", s.notImplemented("getEffectiveConfig")},
+		{http.MethodGet, "/api/meta", "getMeta", s.handleGetMeta},
+		{http.MethodGet, "/api/config", "getEffectiveConfig", s.handleGetConfig},
 		{http.MethodGet, "/api/health", "getHealth", s.handleHealth},
 		{http.MethodGet, "/api/repositories", "listRepositories", s.handleListRepositories},
 		{http.MethodGet, "/api/issues/{issueId}/preview", "previewIssue", s.handlePreviewIssue},
@@ -128,12 +132,6 @@ func (s *Server) Handler() http.Handler {
 	handler = s.requestIDMiddleware(handler)
 	handler = s.recoveryMiddleware(handler)
 	return handler
-}
-
-func (s *Server) notImplemented(operation string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		s.writeProblem(w, http.StatusNotImplemented, "not_implemented", operation+" is not implemented in this build yet.")
-	}
 }
 
 func (s *Server) redact(text string) string {

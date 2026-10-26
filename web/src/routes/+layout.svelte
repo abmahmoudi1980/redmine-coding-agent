@@ -22,6 +22,8 @@
 	<nav>
 		<a href={resolve('/')}>Issue preview</a>
 		<a href={resolve('/runs')}>Run history</a>
+		<a href={resolve('/health')}>Health</a>
+		<a href={resolve('/settings')}>Settings</a>
 	</nav>
 	<p class="worker" data-testid="worker-status" aria-live="polite">
 		<span class:ok={workerStatus === 'ok'} class:degraded={workerStatus === 'degraded'}></span>

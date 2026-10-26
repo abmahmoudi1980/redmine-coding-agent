@@ -1,0 +1,63 @@
+package runner
+
+import (
+	"testing"
+
+	"github.com/systemgroup/redmine-coding-agent/internal/config"
+	"github.com/systemgroup/redmine-coding-agent/internal/domain"
+	"github.com/systemgroup/redmine-coding-agent/internal/gitlab"
+)
+
+// The stored mapping is the policy the runner must obey: a per-repository
+// switch can only narrow the global one (FR-042, T129).
+func TestRepositoryPolicyOverridesTheGlobalSwitches(t *testing.T) {
+	cfg := &config.Config{
+		GitLab: config.GitLab{PushEnabled: true, MergeRequestEnabled: true},
+	}
+	runner := &Runner{config: cfg, gitlab: &gitlab.Client{}}
+
+	cases := []struct {
+		name          string
+		mapping       domain.RepositoryMapping
+		wantPublish   bool
+		wantMergeRepo bool
+	}{
+		{
+			name:          "table disables both",
+			mapping:       domain.RepositoryMapping{PublishEnabled: false, MergeRequestEnabled: false},
+			wantPublish:   false,
+			wantMergeRepo: false,
+		},
+		{
+			name:          "table enables both",
+			mapping:       domain.RepositoryMapping{PublishEnabled: true, MergeRequestEnabled: true},
+			wantPublish:   true,
+			wantMergeRepo: true,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := runner.publishEnabled(testCase.mapping); got != testCase.wantPublish {
+				t.Errorf("publishEnabled = %v, want %v", got, testCase.wantPublish)
+			}
+			if got := runner.mergeRequestEnabled(testCase.mapping); got != testCase.wantMergeRepo {
+				t.Errorf("mergeRequestEnabled = %v, want %v", got, testCase.wantMergeRepo)
+			}
+		})
+	}
+}
+
+func TestGlobalPolicyStillGatesTheRepositorySwitch(t *testing.T) {
+	cfg := &config.Config{
+		GitLab: config.GitLab{PushEnabled: false, MergeRequestEnabled: false},
+	}
+	runner := &Runner{config: cfg, gitlab: &gitlab.Client{}}
+	mapping := domain.RepositoryMapping{PublishEnabled: true, MergeRequestEnabled: true}
+
+	if runner.publishEnabled(mapping) {
+		t.Error("a globally disabled push must not be overridden by the repository")
+	}
+	if runner.mergeRequestEnabled(mapping) {
+		t.Error("a globally disabled merge request must not be overridden by the repository")
+	}
+}

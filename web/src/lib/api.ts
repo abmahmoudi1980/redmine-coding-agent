@@ -14,6 +14,8 @@ export type RunEvent = components['schemas']['RunEvent'];
 export type AgentInvocation = components['schemas']['AgentInvocation'];
 export type Report = components['schemas']['Report'];
 export type CheckAttempt = components['schemas']['CheckAttempt'];
+export type EffectiveConfig = components['schemas']['EffectiveConfig'];
+export type Meta = components['schemas']['Meta'];
 
 /** ApiError carries the RFC 9457 problem document when the worker sent one. */
 export class ApiError extends Error {
@@ -108,8 +110,18 @@ export async function listRepositories(project?: string): Promise<Repository[]> 
 }
 
 /** getHealth reports worker and dependency liveness. */
-export function getHealth(): Promise<HealthReport> {
-	return request<HealthReport>('/api/health');
+export function getHealth(deep = false): Promise<HealthReport> {
+	return request<HealthReport>(`/api/health${deep ? '?deep=true' : ''}`);
+}
+
+/** getEffectiveConfig returns the redacted configuration and its content hash. */
+export function getEffectiveConfig(): Promise<EffectiveConfig> {
+	return request<EffectiveConfig>('/api/config');
+}
+
+/** getMeta reports the build identity of the running worker. */
+export function getMeta(): Promise<Meta> {
+	return request<Meta>('/api/meta');
 }
 
 /** createRun starts the pipeline for a confirmed preview (FR-008). */
@@ -132,12 +144,14 @@ export function getRun(runId: string): Promise<RunDetail> {
 }
 
 /** listRuns returns one newest-first page of durable run history (FR-049). */
-export function listRuns(params: {
-	state?: string;
-	issueId?: number;
-	limit?: number;
-	cursor?: string;
-} = {}): Promise<RunPage> {
+export function listRuns(
+	params: {
+		state?: string;
+		issueId?: number;
+		limit?: number;
+		cursor?: string;
+	} = {}
+): Promise<RunPage> {
 	const query = new URLSearchParams();
 	if (params.state) {
 		query.set('state', params.state);

@@ -279,22 +279,22 @@ Single Go module at the repository root, with the SPA in `web/`:
 
 ### Tests for User Story 6
 
-- [ ] T119 [P] [US6] Write `internal/config/reload_test.go`: a changed mapping/check/base branch/agent setting is applied on restart without recompiling, and a removed mapping stops resolving (SC-012)
-- [ ] T120 [P] [US6] Write `tests/integration/secret_scan_test.go`: run a full pipeline against the fakes, then scan the DB dump, all log files, transcripts, prompts, reports, and HTTP responses for the fixture secret values — zero matches (SC-013)
-- [ ] T121 [P] [US6] Write `internal/health/health_test.go`: each probe reports `ok`/`failing` independently, a failing dependency degrades the overall status without failing the request, and remediation text is present on failure (FR-058)
-- [ ] T122 [P] [US6] Write `web/e2e/health.spec.ts`: the health page lists every component with status and latency, and shows the remediation for a failing one
+- [X] T119 [P] [US6] Write `internal/config/reload_test.go`: a changed mapping/check/base branch/agent setting is applied on restart without recompiling, and a removed mapping stops resolving (SC-012)
+- [X] T120 [P] [US6] Write `tests/integration/secret_scan_test.go`: run a full pipeline against the fakes, then scan the DB dump, all log files, transcripts, prompts, reports, and HTTP responses for the fixture secret values — zero matches (SC-013)
+- [X] T121 [P] [US6] Write `internal/health/health_test.go`: each probe reports `ok`/`failing` independently, a failing dependency degrades the overall status without failing the request, and remediation text is present on failure (FR-058)
+- [X] T122 [P] [US6] Write `web/e2e/health.spec.ts`: the health page lists every component with status and latency, and shows the remediation for a failing one
 
 ### Implementation for User Story 6
 
-- [ ] T123 [US6] Implement config → database seeding in `internal/store/seed.go`: upsert `repositories` and `repository_checks` from configuration, deactivate mappings removed from config without deleting history, and hash the effective non-secret config into `configuration_profiles` (FR-055)
-- [ ] T124 [US6] Implement `GET /api/config` in `internal/api/config.go`: return the redacted effective configuration, `contentHash`, `schemaVersion`, and `loadedAt`; the same document persisted for audit
-- [ ] T125 [US6] Implement `internal/health/health.go`: probes for database writability + migration state, Redmine (credential-authenticated read), GitLab reachability, repository fetch access, agent `--version`, and disk space, each with latency and remediation text
-- [ ] T126 [US6] Implement `GET /api/health?deep=true` in `internal/api/health.go`, returning `HealthReport` with per-component status and never a `5xx` for a degraded dependency
-- [ ] T127 [US6] Implement the `doctor` command in `cmd/redmine-agent/doctor.go`: the ten ordered checks from `contracts/cli.md`, `--deep`, `--all`, human and `--json` output, exit `4` on a dependency failure and `3` on configuration failure
-- [ ] T128 [US6] Implement `GET /api/meta` in `internal/api/meta.go` (version, commit, builtAt, os, arch, schemaVersion) fed by `-ldflags` build variables and registered in `Makefile`/`.goreleaser.yaml`
-- [ ] T129 [US6] Implement per-repository policy overrides end to end: `publish_enabled`, `merge_request_enabled`, check `required`, and per-check `timeout_seconds` read from the seeded tables and applied by the runner (FR-042)
-- [ ] T130 [P] [US6] Implement `web/src/routes/health/+page.svelte`: component grid with status, latency, detail, remediation, and a manual refresh; deep-probe toggle
-- [ ] T131 [US6] Implement `web/src/routes/settings/+page.svelte` (read-only): render `GET /api/config` as a redacted settings view with a "loaded at / hash" header and a note that changes require a restart
+- [X] T123 [US6] Implement config → database seeding in `internal/store/seed.go`: upsert `repositories` and `repository_checks` from configuration, deactivate mappings removed from config without deleting history, and hash the effective non-secret config into `configuration_profiles` (FR-055)
+- [X] T124 [US6] Implement `GET /api/config` in `internal/api/config.go`: return the redacted effective configuration, `contentHash`, `schemaVersion`, and `loadedAt`; the same document persisted for audit
+- [X] T125 [US6] Implement `internal/health/health.go`: probes for database writability + migration state, Redmine (credential-authenticated read), GitLab reachability, repository fetch access, agent `--version`, and disk space, each with latency and remediation text
+- [X] T126 [US6] Implement `GET /api/health?deep=true` in `internal/api/health.go`, returning `HealthReport` with per-component status and never a `5xx` for a degraded dependency
+- [X] T127 [US6] Implement the `doctor` command in `cmd/redmine-agent/doctor.go`: the ten ordered checks from `contracts/cli.md`, `--deep`, `--all`, human and `--json` output, exit `4` on a dependency failure and `3` on configuration failure
+- [X] T128 [US6] Implement `GET /api/meta` in `internal/api/meta.go` (version, commit, builtAt, os, arch, schemaVersion) fed by `-ldflags` build variables and registered in `Makefile`/`.goreleaser.yaml`
+- [X] T129 [US6] Implement per-repository policy overrides end to end: `publish_enabled`, `merge_request_enabled`, check `required`, and per-check `timeout_seconds` read from the seeded tables and applied by the runner (FR-042)
+- [X] T130 [P] [US6] Implement `web/src/routes/health/+page.svelte`: component grid with status, latency, detail, remediation, and a manual refresh; deep-probe toggle
+- [X] T131 [US6] Implement `web/src/routes/settings/+page.svelte` (read-only): render `GET /api/config` as a redacted settings view with a "loaded at / hash" header and a note that changes require a restart
 
 **Checkpoint**: An administrator can operate the tool with a text editor and a restart.
 

@@ -257,3 +257,63 @@ func TestDownloadAttachmentsRecordsAvailability(t *testing.T) {
 		t.Fatal("the credential was not registered during the attachment download")
 	}
 }
+
+func TestProbeAndGetProjectUseTheCredentialWithoutMutating(t *testing.T) {
+	t.Setenv("TEST_REDMINE_KEY", testAPIKey)
+
+	methods := make([]string, 0, 2)
+	client, redactor, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Redmine-API-Key") != testAPIKey {
+			t.Errorf("%s has no API key", r.URL.Path)
+		}
+		methods = append(methods, r.Method)
+		switch r.URL.Path {
+		case "/users/current.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user": map[string]any{"login": "worker", "firstname": "Worker", "lastname": "Bot"},
+			})
+		case "/projects/billing.json":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project": map[string]any{"id": 7, "identifier": "billing", "name": "Billing"},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	login, err := client.Probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if login != "worker" {
+		t.Fatalf("login = %q", login)
+	}
+
+	project, err := client.GetProject(context.Background(), "billing")
+	if err != nil {
+		t.Fatalf("get project: %v", err)
+	}
+	if project.ID.String() != "7" || project.Name != "Billing" {
+		t.Fatalf("project = %+v", project)
+	}
+	for _, method := range methods {
+		if method != http.MethodGet {
+			t.Fatalf("%s was used; probes must be read-only", method)
+		}
+	}
+	if redactor.Redact(testAPIKey) != "***" {
+		t.Fatal("the credential was not registered with the redactor")
+	}
+}
+
+func TestProbeReportsARejectedCredential(t *testing.T) {
+	t.Setenv("TEST_REDMINE_KEY", testAPIKey)
+	client, _, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+
+	_, err := client.Probe(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "rejected") {
+		t.Fatalf("error = %v, want a rejected-credential message", err)
+	}
+}

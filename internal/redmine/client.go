@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -158,6 +159,130 @@ func (c *Client) GetIssue(ctx context.Context, id int) (*Issue, error) {
 	}
 	issue.RawJSON = string(envelope.Issue)
 	return &issue, nil
+}
+
+// Probe proves the configured credential can read Redmine. It performs one
+// authenticated GET and mutates nothing, which is what the health and doctor
+// checks need (FR-058).
+func (c *Client) Probe(ctx context.Context) (string, error) {
+	endpoint := c.baseURL + "/users/current.json"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("redmine: build request: %w", err)
+	}
+	key, err := c.apiKey.Resolve()
+	if err != nil {
+		return "", fmt.Errorf("redmine: %w", err)
+	}
+	if c.redactor != nil {
+		c.redactor.Register(key)
+	}
+	request.Header.Set("X-Redmine-API-Key", key)
+	request.Header.Set("Accept", "application/json")
+
+	started := time.Now()
+	response, err := c.http.Do(request)
+	if err != nil {
+		return "", &domain.UpstreamError{Kind: domain.UpstreamRedmine, Op: "probe credential", Err: err}
+	}
+	defer response.Body.Close()
+
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes))
+	c.logRequest("/users/current.json", response.StatusCode, time.Since(started))
+	if readErr != nil {
+		return "", &domain.UpstreamError{Kind: domain.UpstreamRedmine, Op: "probe credential", Err: readErr}
+	}
+
+	switch response.StatusCode {
+	case http.StatusOK:
+		// Continue below.
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "", fmt.Errorf("redmine: the configured credential was rejected (HTTP %d)", response.StatusCode)
+	default:
+		return "", &domain.UpstreamError{
+			Kind: domain.UpstreamRedmine,
+			Op:   "probe credential",
+			Err:  fmt.Errorf("unexpected HTTP status %d", response.StatusCode),
+		}
+	}
+
+	var envelope struct {
+		User struct {
+			Login     string `json:"login"`
+			FirstName string `json:"firstname"`
+			LastName  string `json:"lastname"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return "", &domain.UpstreamError{Kind: domain.UpstreamRedmine, Op: "decode current user", Err: err}
+	}
+	login := strings.TrimSpace(envelope.User.Login)
+	if login == "" {
+		login = strings.TrimSpace(envelope.User.FirstName + " " + envelope.User.LastName)
+	}
+	if login == "" {
+		login = "the configured credential"
+	}
+	return login, nil
+}
+
+// GetProject proves the configured credential can read one configured project.
+// It is a single authenticated GET and mutates nothing (FR-058).
+func (c *Client) GetProject(ctx context.Context, identifier string) (*Project, error) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return nil, errors.New("redmine: project identifier is required")
+	}
+	endpoint := c.baseURL + "/projects/" + url.PathEscape(identifier) + ".json"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("redmine: build request: %w", err)
+	}
+	key, err := c.apiKey.Resolve()
+	if err != nil {
+		return nil, fmt.Errorf("redmine: %w", err)
+	}
+	if c.redactor != nil {
+		c.redactor.Register(key)
+	}
+	request.Header.Set("X-Redmine-API-Key", key)
+	request.Header.Set("Accept", "application/json")
+
+	started := time.Now()
+	response, err := c.http.Do(request)
+	if err != nil {
+		return nil, &domain.UpstreamError{Kind: domain.UpstreamRedmine, Op: "read project " + identifier, Err: err}
+	}
+	defer response.Body.Close()
+
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes))
+	c.logRequest("/projects/"+identifier+".json", response.StatusCode, time.Since(started))
+	if readErr != nil {
+		return nil, &domain.UpstreamError{Kind: domain.UpstreamRedmine, Op: "read project " + identifier, Err: readErr}
+	}
+
+	switch response.StatusCode {
+	case http.StatusOK:
+		// Continue below.
+	case http.StatusNotFound:
+		return nil, fmt.Errorf("redmine: project %q was not found or is not visible to the credential", identifier)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, fmt.Errorf("redmine: the configured credential cannot read project %q (HTTP %d)", identifier, response.StatusCode)
+	default:
+		return nil, &domain.UpstreamError{
+			Kind: domain.UpstreamRedmine,
+			Op:   "read project " + identifier,
+			Err:  fmt.Errorf("unexpected HTTP status %d", response.StatusCode),
+		}
+	}
+
+	var envelope struct {
+		Project Project `json:"project"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, &domain.UpstreamError{Kind: domain.UpstreamRedmine, Op: "decode project " + identifier, Err: err}
+	}
+	return &envelope.Project, nil
 }
 
 // FailureFor maps a client error to the failure vocabulary (FR-005).

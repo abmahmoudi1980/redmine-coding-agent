@@ -20,6 +20,7 @@ import (
 	"github.com/systemgroup/redmine-coding-agent/internal/domain"
 	"github.com/systemgroup/redmine-coding-agent/internal/git"
 	"github.com/systemgroup/redmine-coding-agent/internal/gitlab"
+	"github.com/systemgroup/redmine-coding-agent/internal/health"
 	"github.com/systemgroup/redmine-coding-agent/internal/logging"
 	"github.com/systemgroup/redmine-coding-agent/internal/redmine"
 	"github.com/systemgroup/redmine-coding-agent/internal/runner"
@@ -112,6 +113,15 @@ func newPipeline(t *testing.T, opts pipelineOptions) *pipelineEnvironment {
 		Redactor: h.Redactor,
 		Redmine:  redmineClient,
 		Runs:     pipeline,
+		Health: health.New(health.Deps{
+			Store:    h.Store,
+			Config:   h.Config,
+			Redmine:  redmineClient,
+			GitLab:   gitlabClient,
+			Git:      manager,
+			Adapters: registry,
+			Redactor: h.Redactor,
+		}),
 	}).Handler())
 	t.Cleanup(server.Close)
 	t.Cleanup(pipeline.Wait)

@@ -374,11 +374,39 @@ func (f *RedmineFake) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(path, "/issues/") && strings.HasSuffix(path, ".json"):
 		f.serveIssue(w, r, strings.TrimSuffix(strings.TrimPrefix(path, "/issues/"), ".json"))
+	case strings.HasPrefix(path, "/projects/") && strings.HasSuffix(path, ".json"):
+		f.serveProject(w, r, strings.TrimSuffix(strings.TrimPrefix(path, "/projects/"), ".json"))
 	case strings.HasPrefix(path, "/attachments/download/"):
 		f.serveAttachment(w, r, strings.TrimPrefix(path, "/attachments/download/"))
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// serveProject answers the authenticated project read the health check uses.
+func (f *RedmineFake) serveProject(w http.ResponseWriter, r *http.Request, identifier string) {
+	f.mu.Lock()
+	var project Issue
+	found := false
+	for _, issue := range f.issues {
+		if issue.ProjectIdentifier == identifier {
+			project = issue
+			found = true
+			break
+		}
+	}
+	f.mu.Unlock()
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "project not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"project": map[string]any{
+			"id":         project.ProjectID,
+			"identifier": project.ProjectIdentifier,
+			"name":       project.ProjectName,
+		},
+	})
 }
 
 func (f *RedmineFake) serveIssue(w http.ResponseWriter, r *http.Request, idText string) {

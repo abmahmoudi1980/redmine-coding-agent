@@ -17,6 +17,7 @@ import (
 	"github.com/systemgroup/redmine-coding-agent/internal/config"
 	"github.com/systemgroup/redmine-coding-agent/internal/git"
 	"github.com/systemgroup/redmine-coding-agent/internal/gitlab"
+	"github.com/systemgroup/redmine-coding-agent/internal/health"
 	"github.com/systemgroup/redmine-coding-agent/internal/logging"
 	"github.com/systemgroup/redmine-coding-agent/internal/redmine"
 	"github.com/systemgroup/redmine-coding-agent/internal/runner"
@@ -59,8 +60,13 @@ func runServe(args []string) error {
 		}
 	}()
 
-	if _, err := st.SeedRepositories(ctx, cfg); err != nil {
+	seeded, err := st.SeedConfiguration(ctx, cfg)
+	if err != nil {
 		return fmt.Errorf("seed repositories from configuration: %w", err)
+	}
+	if len(seeded.Deactivated) > 0 {
+		logger.Base().Warn("repository mappings removed from configuration were deactivated",
+			"repositories", seeded.Deactivated)
 	}
 
 	redmineClient, err := redmine.New(redmine.Options{
@@ -97,10 +103,25 @@ func runServe(args []string) error {
 		return err
 	}
 
+	gitManager := git.NewManager("", cfg.Data.WorkspaceRoot)
+	if token, tokenErr := cfg.GitLab.Token.Resolve(); tokenErr == nil && token != "" {
+		gitManager.SetHTTPAuth("oauth2", token)
+	}
+
+	healthChecker := health.New(health.Deps{
+		Store:    st,
+		Config:   cfg,
+		Redmine:  redmineClient,
+		GitLab:   gitlabClient,
+		Git:      gitManager,
+		Adapters: registry,
+		Redactor: redactor,
+	})
+
 	pipeline, err := runner.New(runner.Options{
 		Config:    cfg,
 		Store:     st,
-		Git:       git.NewManager("", cfg.Data.WorkspaceRoot),
+		Git:       gitManager,
 		Adapters:  registry,
 		Redmine:   redmineClient,
 		GitLab:    gitlabClient,
@@ -125,6 +146,7 @@ func runServe(args []string) error {
 		Redactor: redactor,
 		Redmine:  redmineClient,
 		Runs:     pipeline,
+		Health:   healthChecker,
 		Build: api.BuildInfo{
 			Version:       version,
 			Commit:        commit,

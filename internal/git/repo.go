@@ -266,6 +266,25 @@ func (m *Manager) Push(ctx context.Context, workspace, branch string) error {
 	return nil
 }
 
+// CheckRemote proves a remote is readable without changing local state. The
+// doctor and health checks use it; nothing is cloned, fetched, or written.
+func (m *Manager) CheckRemote(ctx context.Context, remoteURL string) (int, error) {
+	if strings.TrimSpace(remoteURL) == "" {
+		return 0, errors.New("git: remote URL is required")
+	}
+	out, err := m.git(ctx, "", "ls-remote", "--heads", remoteURL)
+	if err != nil {
+		return 0, err
+	}
+	heads := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) != "" {
+			heads++
+		}
+	}
+	return heads, nil
+}
+
 // BranchExists reports local and remote existence of a branch.
 func (m *Manager) BranchExists(ctx context.Context, workspace, branch string) (bool, bool, error) {
 	if strings.TrimSpace(branch) == "" {

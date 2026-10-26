@@ -102,6 +102,26 @@ func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	return *version, nil
 }
 
+// LatestSchemaVersion is the highest migration version this build embeds, so a
+// health probe can tell "current" from "pending migration".
+func LatestSchemaVersion() int {
+	entries, err := fs.Glob(migrationFiles, "migrations/*.sql")
+	if err != nil {
+		return 0
+	}
+	latest := 0
+	for _, entry := range entries {
+		version, err := migrationVersion(entry)
+		if err != nil {
+			continue
+		}
+		if version > latest {
+			latest = version
+		}
+	}
+	return latest
+}
+
 func migrationVersion(entry string) (int, error) {
 	base := strings.TrimPrefix(entry, "migrations/")
 	prefix, _, ok := strings.Cut(base, "_")
