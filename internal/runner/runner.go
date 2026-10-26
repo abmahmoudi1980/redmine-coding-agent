@@ -149,6 +149,16 @@ type CreateRequest struct {
 // Create validates, reserves a concurrency slot, persists the snapshot and run,
 // and starts the pipeline. It returns as soon as the run is queued.
 func (r *Runner) Create(ctx context.Context, req CreateRequest) (*domain.Run, error) {
+	return r.create(ctx, req, createOptions{})
+}
+
+// createOptions carries the retry lineage that only Retry sets.
+type createOptions struct {
+	previous *domain.Run
+	branch   string
+}
+
+func (r *Runner) create(ctx context.Context, req CreateRequest, opts createOptions) (*domain.Run, error) {
 	if !req.Confirm {
 		return nil, ErrConfirmRequired
 	}
@@ -202,6 +212,14 @@ func (r *Runner) Create(ctx context.Context, req CreateRequest) (*domain.Run, er
 		return nil, err
 	}
 
+	branch := opts.branch
+	if branch == "" {
+		branch = BranchName(req.IssueID)
+		if opts.previous != nil && opts.previous.Branch != "" {
+			branch = opts.previous.Branch
+		}
+	}
+
 	repositoryID := mapping.ID
 	run := &domain.Run{
 		PublicID:        publicID,
@@ -211,13 +229,17 @@ func (r *Runner) Create(ctx context.Context, req CreateRequest) (*domain.Run, er
 		State:           domain.StateQueued,
 		Stage:           domain.StageCreated,
 		BaseBranch:      mapping.BaseBranch,
-		Branch:          BranchName(req.IssueID),
+		Branch:          branch,
 		AgentName:       r.agent.Adapter,
 		AgentModel:      r.agent.Model,
 		AgentConfigID:   r.agent.ConfigID,
 		ConfigProfileID: profileID,
 		RequestedBy:     req.RequestedBy,
 		CreatedAt:       time.Now().UTC(),
+	}
+	if opts.previous != nil {
+		previousID := opts.previous.ID
+		run.PreviousRunID = &previousID
 	}
 	if err := r.store.ReserveRun(ctx, &snapshot, run, r.config.Concurrency.MaxActiveRuns); err != nil {
 		switch {
@@ -364,6 +386,9 @@ func (r *Runner) settle(ctx context.Context, run *domain.Run, out outcome, log *
 			transition.Event.Message = fmt.Sprintf("run ended %s at %s: %s", out.State, stage, out.Failure.Message)
 		}
 	}
+	// The report is persisted before the terminal state becomes observable, so
+	// a reader that sees a finished run can always read its report (FR-044).
+	r.persistFallbackReport(ctx, run, out)
 	if err := r.store.TransitionRun(ctx, run.ID, transition); err != nil {
 		r.logger.Base().Error("could not record the terminal state",
 			"run_id", run.PublicID, "state", out.State, "error", err)
@@ -371,7 +396,6 @@ func (r *Runner) settle(ctx context.Context, run *domain.Run, out outcome, log *
 	}
 	run.State = out.State
 	run.Stage = stage
-	r.persistFallbackReport(ctx, run, out)
 	if out.Failure != nil {
 		r.logger.Base().Info("run failed",
 			"run_id", run.PublicID, "code", out.Failure.Code, "stage", stage,

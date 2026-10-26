@@ -283,6 +283,96 @@ func (m *Manager) BranchExists(ctx context.Context, workspace, branch string) (b
 	return local, remote, nil
 }
 
+// AttemptBranch is the branch name for one attempt. Attempt 1 uses the issue
+// branch unchanged; a retry that must not overwrite an earlier attempt gets a
+// stable attempt suffix (FR-052, R18).
+func AttemptBranch(issueBranch string, attempt int) string {
+	if attempt <= 1 || strings.TrimSpace(issueBranch) == "" {
+		return issueBranch
+	}
+	return fmt.Sprintf("%s-r%d", issueBranch, attempt)
+}
+
+// BranchPlan is the outcome of retry branch planning. Reused is true only when
+// the previous attempt left nothing a retry could overwrite.
+type BranchPlan struct {
+	Branch       string
+	Attempt      int
+	Reused       bool
+	Superseded   bool
+	LocalExists  bool
+	RemoteExists bool
+	BaseRevision string
+}
+
+// PlanAttemptBranch decides which branch a retry may use. The prior attempt's
+// branch is reused only when it was never pushed, no local branch still holds
+// it, and the base revision has not moved; otherwise a suffixed branch is
+// chosen. There is no force-push path anywhere in this package (FR-041).
+func (m *Manager) PlanAttemptBranch(ctx context.Context, repositoryID int64, baseBranch, issueBranch string, attempt int, priorPushed bool, priorBaseRevision string) (BranchPlan, error) {
+	if strings.TrimSpace(issueBranch) == "" {
+		return BranchPlan{}, errors.New("git: branch is required")
+	}
+	if attempt < 1 {
+		attempt = 1
+	}
+	plan := BranchPlan{Branch: issueBranch, Attempt: attempt}
+
+	mirror, err := m.MirrorPath(repositoryID)
+	if err != nil {
+		return plan, err
+	}
+	unlock := m.locks.Lock(repositoryID)
+	defer unlock()
+
+	if _, statErr := os.Stat(filepath.Join(mirror, "HEAD")); statErr != nil {
+		// No cache to inspect: never risk the previous attempt's work.
+		if attempt > 1 && priorPushed {
+			plan.Branch = AttemptBranch(issueBranch, attempt)
+			plan.Superseded = true
+		}
+		return plan, nil
+	}
+
+	plan.BaseRevision = m.resolveRevision(ctx, mirror, m.resolveBaseRef(ctx, mirror, baseBranch))
+	plan.LocalExists = m.mirrorRefExists(ctx, mirror, "refs/heads/"+issueBranch)
+	plan.RemoteExists = m.mirrorRefExists(ctx, mirror, "refs/remotes/origin/"+issueBranch)
+
+	sameBase := plan.BaseRevision != "" && plan.BaseRevision == priorBaseRevision
+	if attempt == 1 || (!priorPushed && !plan.LocalExists && !plan.RemoteExists && sameBase) {
+		plan.Reused = true
+		return plan, nil
+	}
+
+	for next := attempt; next < attempt+50; next++ {
+		candidate := AttemptBranch(issueBranch, next)
+		if m.mirrorRefExists(ctx, mirror, "refs/heads/"+candidate) ||
+			m.mirrorRefExists(ctx, mirror, "refs/remotes/origin/"+candidate) {
+			continue
+		}
+		plan.Branch = candidate
+		plan.Superseded = true
+		return plan, nil
+	}
+	return plan, fmt.Errorf("git: no free attempt branch for %s after attempt %d", issueBranch, attempt)
+}
+
+func (m *Manager) mirrorRefExists(ctx context.Context, mirror, ref string) bool {
+	_, err := m.git(ctx, mirror, "rev-parse", "--verify", "--quiet", ref)
+	return err == nil
+}
+
+func (m *Manager) resolveRevision(ctx context.Context, mirror, ref string) string {
+	if strings.TrimSpace(ref) == "" {
+		return ""
+	}
+	out, err := m.git(ctx, mirror, "rev-parse", "--verify", "--quiet", ref)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
 // HasUnpushedCommits reports commits on the current branch that no remote
 // branch contains. baseRevision is the commit the worktree was created from,
 // so an untouched branch is correctly reported as nothing-to-lose even though

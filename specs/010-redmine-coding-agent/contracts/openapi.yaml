@@ -692,6 +692,10 @@ components:
         issueId: { type: integer }
         issueSubject: { type: string }
         previousRunId: { type: string, format: uuid, nullable: true }
+        attemptNo:
+          type: integer
+          minimum: 1
+          description: 1 for the original attempt; increases along the retry chain (FR-052).
         state: { $ref: '#/components/schemas/RunState' }
         stage: { type: string }
         terminal: { type: boolean }
@@ -715,8 +719,17 @@ components:
         endedAt: { type: string, format: date-time, nullable: true }
         elapsedMs: { type: integer, description: Server-computed; clients should tick locally from startedAt. }
         cancelRequestedAt: { type: string, format: date-time, nullable: true }
+        interruptedStage:
+          type: string
+          description: The stage the run had reached when startup recovery interrupted it (FR-051).
         failureCode: { $ref: '#/components/schemas/FailureCode' }
         failureMessage: { type: string }
+        failureStage:
+          type: string
+          description: The stage at which the run failed, rendered so a failure is diagnosable without logs (SC-011).
+        failureRemediation:
+          type: string
+          description: Actionable next step for the failure code (FR-017).
         summary: { type: string }
 
     RunDetail:

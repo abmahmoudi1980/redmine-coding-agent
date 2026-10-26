@@ -21,6 +21,7 @@ import (
 type RunService interface {
 	Create(ctx context.Context, req runner.CreateRequest) (*domain.Run, error)
 	Cancel(ctx context.Context, publicID string) (run *domain.Run, changed bool, err error)
+	Retry(ctx context.Context, req runner.RetryRequest) (*domain.Run, error)
 }
 
 type createRunRequest struct {
@@ -31,29 +32,33 @@ type createRunRequest struct {
 }
 
 type runDocument struct {
-	RunID             string            `json:"runId"`
-	IssueID           int               `json:"issueId"`
-	IssueSubject      string            `json:"issueSubject,omitempty"`
-	PreviousRunID     *string           `json:"previousRunId"`
-	State             string            `json:"state"`
-	Stage             string            `json:"stage"`
-	Terminal          bool              `json:"terminal"`
-	Repository        *RepositoryOption `json:"repository"`
-	BaseBranch        string            `json:"baseBranch,omitempty"`
-	BaseRevision      string            `json:"baseRevision,omitempty"`
-	Branch            string            `json:"branch,omitempty"`
-	CommitSHA         *string           `json:"commitSha"`
-	PushedAt          *time.Time        `json:"pushedAt"`
-	MergeRequestURL   *string           `json:"mergeRequestUrl"`
-	Agent             agentDocument     `json:"agent"`
-	CreatedAt         time.Time         `json:"createdAt"`
-	StartedAt         *time.Time        `json:"startedAt"`
-	EndedAt           *time.Time        `json:"endedAt"`
-	ElapsedMS         int64             `json:"elapsedMs"`
-	CancelRequestedAt *time.Time        `json:"cancelRequestedAt"`
-	FailureCode       string            `json:"failureCode,omitempty"`
-	FailureMessage    string            `json:"failureMessage,omitempty"`
-	Summary           string            `json:"summary,omitempty"`
+	RunID              string            `json:"runId"`
+	IssueID            int               `json:"issueId"`
+	IssueSubject       string            `json:"issueSubject,omitempty"`
+	PreviousRunID      *string           `json:"previousRunId"`
+	AttemptNo          int               `json:"attemptNo"`
+	State              string            `json:"state"`
+	Stage              string            `json:"stage"`
+	Terminal           bool              `json:"terminal"`
+	Repository         *RepositoryOption `json:"repository"`
+	BaseBranch         string            `json:"baseBranch,omitempty"`
+	BaseRevision       string            `json:"baseRevision,omitempty"`
+	Branch             string            `json:"branch,omitempty"`
+	CommitSHA          *string           `json:"commitSha"`
+	PushedAt           *time.Time        `json:"pushedAt"`
+	MergeRequestURL    *string           `json:"mergeRequestUrl"`
+	Agent              agentDocument     `json:"agent"`
+	CreatedAt          time.Time         `json:"createdAt"`
+	StartedAt          *time.Time        `json:"startedAt"`
+	EndedAt            *time.Time        `json:"endedAt"`
+	ElapsedMS          int64             `json:"elapsedMs"`
+	CancelRequestedAt  *time.Time        `json:"cancelRequestedAt"`
+	InterruptedStage   string            `json:"interruptedStage,omitempty"`
+	FailureCode        string            `json:"failureCode,omitempty"`
+	FailureMessage     string            `json:"failureMessage,omitempty"`
+	FailureStage       string            `json:"failureStage,omitempty"`
+	FailureRemediation string            `json:"failureRemediation,omitempty"`
+	Summary            string            `json:"summary,omitempty"`
 }
 
 type agentDocument struct {
@@ -107,6 +112,11 @@ type runDetailDocument struct {
 	Timeline          []eventDocument           `json:"timeline"`
 }
 
+type runPageDocument struct {
+	Items      []runDocument `json:"items"`
+	NextCursor *string       `json:"nextCursor"`
+}
+
 // handleCreateRun is the only way a run starts (FR-008).
 func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	var body createRunRequest
@@ -140,6 +150,103 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		RequestedBy:  strings.TrimSpace(r.Header.Get("X-Operator")),
 	})
 	if err != nil {
+		s.writeRunError(w, err)
+		return
+	}
+
+	w.Header().Set("Location", "/api/runs/"+created.PublicID)
+	s.writeJSON(w, http.StatusCreated, s.runDocumentFor(ctx, created))
+}
+
+// handleListRuns returns the durable, newest-first run history (FR-049).
+func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "worker_not_ready", "The database is not available in this process.")
+		return
+	}
+
+	query := r.URL.Query()
+	filter := store.RunFilter{}
+
+	if raw := strings.TrimSpace(query.Get("state")); raw != "" {
+		state := domain.RunState(raw)
+		if !state.Valid() {
+			s.writeProblem(w, http.StatusBadRequest, "invalid_state", "The state filter must be a known run state.")
+			return
+		}
+		filter.State = state
+	}
+	if raw := strings.TrimSpace(query.Get("issueId")); raw != "" {
+		issueID, err := strconv.Atoi(raw)
+		if err != nil || issueID < 1 {
+			s.writeProblem(w, http.StatusBadRequest, "invalid_issue_id", "The issue number must be a positive integer.")
+			return
+		}
+		filter.IssueID = issueID
+	}
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 100 {
+			s.writeProblem(w, http.StatusBadRequest, "invalid_limit", "The page size must be between 1 and 100.")
+			return
+		}
+		filter.Limit = limit
+	}
+	filter.Cursor = strings.TrimSpace(query.Get("cursor"))
+
+	ctx, cancel := contextWithTimeout(r, 10*time.Second)
+	defer cancel()
+
+	runs, next, err := s.store.ListRuns(ctx, filter)
+	if err != nil {
+		if strings.Contains(err.Error(), "invalid cursor") {
+			s.writeProblem(w, http.StatusBadRequest, "invalid_cursor", "The cursor is not a value this worker issued.")
+			return
+		}
+		s.writeProblem(w, http.StatusInternalServerError, "internal_error", "The run history could not be read.")
+		return
+	}
+
+	items := make([]runDocument, 0, len(runs))
+	for index := range runs {
+		items = append(items, s.runDocumentFor(ctx, &runs[index]))
+	}
+	page := runPageDocument{Items: items}
+	if next != "" {
+		page.NextCursor = &next
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	s.writeJSON(w, http.StatusOK, page)
+}
+
+// handleRetryRun starts a new attempt linked to a finished one (FR-052).
+func (s *Server) handleRetryRun(w http.ResponseWriter, r *http.Request) {
+	publicID := strings.TrimSpace(r.PathValue("runId"))
+	if publicID == "" {
+		s.writeProblem(w, http.StatusNotFound, "run_not_found", "No run matches that identifier.")
+		return
+	}
+	if s.runs == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "worker_not_ready", "The run pipeline is not wired in this process.")
+		return
+	}
+	if _, ok := s.runForRequest(w, r); !ok {
+		return
+	}
+
+	ctx, cancel := contextWithTimeout(r, 60*time.Second)
+	defer cancel()
+
+	created, err := s.runs.Retry(ctx, runner.RetryRequest{
+		PublicID:    publicID,
+		RequestedBy: strings.TrimSpace(r.Header.Get("X-Operator")),
+	})
+	switch {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+		s.writeProblem(w, http.StatusNotFound, "run_not_found", fmt.Sprintf("Run %s does not exist.", publicID))
+		return
+	default:
 		s.writeRunError(w, err)
 		return
 	}
@@ -459,25 +566,33 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) runDocumentFor(ctx context.Context, run *domain.Run) runDocument {
 	document := runDocument{
-		RunID:             run.PublicID,
-		IssueID:           run.IssueID,
-		IssueSubject:      run.IssueSubject,
-		State:             string(run.State),
-		Stage:             string(run.Stage),
-		Terminal:          domain.IsTerminal(run.State),
-		BaseBranch:        run.BaseBranch,
-		BaseRevision:      run.BaseRevision,
-		Branch:            run.Branch,
-		PushedAt:          run.PushedAt,
-		Agent:             agentDocument{Name: run.AgentName, Model: run.AgentModel},
-		CreatedAt:         run.CreatedAt,
-		StartedAt:         run.StartedAt,
-		EndedAt:           run.EndedAt,
-		ElapsedMS:         durationMS(run.StartedAt, run.EndedAt),
-		CancelRequestedAt: run.CancelRequestedAt,
-		FailureCode:       string(run.FailureCode),
-		FailureMessage:    run.FailureMessage,
-		Summary:           run.Summary,
+		RunID:              run.PublicID,
+		IssueID:            run.IssueID,
+		IssueSubject:       run.IssueSubject,
+		AttemptNo:          s.attemptNumber(ctx, run),
+		State:              string(run.State),
+		Stage:              string(run.Stage),
+		Terminal:           domain.IsTerminal(run.State),
+		BaseBranch:         run.BaseBranch,
+		BaseRevision:       run.BaseRevision,
+		Branch:             run.Branch,
+		PushedAt:           run.PushedAt,
+		Agent:              agentDocument{Name: run.AgentName, Model: run.AgentModel},
+		CreatedAt:          run.CreatedAt,
+		StartedAt:          run.StartedAt,
+		EndedAt:            run.EndedAt,
+		ElapsedMS:          durationMS(run.StartedAt, run.EndedAt),
+		CancelRequestedAt:  run.CancelRequestedAt,
+		InterruptedStage:   string(run.InterruptedStage),
+		FailureCode:        string(run.FailureCode),
+		FailureMessage:     run.FailureMessage,
+		FailureStage:       string(run.Stage),
+		FailureRemediation: domain.DefaultRemediation(run.FailureCode),
+		Summary:            run.Summary,
+	}
+	if run.FailureCode == "" {
+		document.FailureStage = ""
+		document.FailureRemediation = ""
 	}
 	if run.CommitSHA != "" {
 		commit := run.CommitSHA
@@ -496,6 +611,28 @@ func (s *Server) runDocumentFor(ctx context.Context, run *domain.Run) runDocumen
 		}
 	}
 	return document
+}
+
+// attemptNumber walks the retry chain so the UI can distinguish a retry from
+// the original attempt without reading every linked run (FR-052).
+func (s *Server) attemptNumber(ctx context.Context, run *domain.Run) int {
+	if run == nil {
+		return 1
+	}
+	number := 1
+	current := run
+	for steps := 0; steps < 50 && current.PreviousRunID != nil; steps++ {
+		if s.store == nil {
+			break
+		}
+		previous, err := s.store.GetRun(ctx, *current.PreviousRunID)
+		if err != nil {
+			break
+		}
+		number++
+		current = previous
+	}
+	return number
 }
 
 func (s *Server) writeRunError(w http.ResponseWriter, err error) {

@@ -54,6 +54,63 @@ func newManager(t *testing.T, base string) (*agentgit.Manager, string) {
 	return manager, workspaceRoot
 }
 
+func TestPlanAttemptBranchReusesOnlySafeBranches(t *testing.T) {
+	origin, initialRevision, base := newOrigin(t)
+	manager, workspaceRoot := newManager(t, base)
+	ctx := context.Background()
+
+	if _, err := manager.EnsureMirror(ctx, 1, origin); err != nil {
+		t.Fatalf("EnsureMirror: %v", err)
+	}
+
+	plan, err := manager.PlanAttemptBranch(ctx, 1, "main", "agent/issue-9", 1, false, "")
+	if err != nil {
+		t.Fatalf("plan attempt 1: %v", err)
+	}
+	if plan.Branch != "agent/issue-9" || !plan.Reused {
+		t.Fatalf("attempt 1 plan = %+v", plan)
+	}
+
+	// A prior attempt that was never pushed, left no local branch, and used the
+	// same base may reuse its name.
+	plan, err = manager.PlanAttemptBranch(ctx, 1, "main", "agent/issue-9", 2, false, initialRevision)
+	if err != nil {
+		t.Fatalf("plan reusable retry: %v", err)
+	}
+	if plan.Branch != "agent/issue-9" || !plan.Reused || plan.Superseded {
+		t.Fatalf("reusable retry plan = %+v", plan)
+	}
+
+	// A local branch still holding the previous attempt forces a suffix.
+	gitRun(t, filepath.Join(base, "repos", "1.git"), "branch", "agent/issue-9", "refs/remotes/origin/main")
+	plan, err = manager.PlanAttemptBranch(ctx, 1, "main", "agent/issue-9", 2, false, initialRevision)
+	if err != nil {
+		t.Fatalf("plan superseding retry: %v", err)
+	}
+	if plan.Branch != "agent/issue-9-r2" || !plan.Superseded || plan.Reused {
+		t.Fatalf("superseding retry plan = %+v", plan)
+	}
+
+	// A pushed previous attempt always gets a new branch.
+	workspace := filepath.Join(workspaceRoot, "attempt-one")
+	if err := manager.AddWorktree(ctx, 1, workspace, "agent/issue-9-r2", "main"); err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+	plan, err = manager.PlanAttemptBranch(ctx, 1, "main", "agent/issue-9", 3, true, initialRevision)
+	if err != nil {
+		t.Fatalf("plan after push: %v", err)
+	}
+	if plan.Branch == "agent/issue-9" || !plan.Superseded {
+		t.Fatalf("a pushed attempt must never be reused: %+v", plan)
+	}
+	if plan.Branch == "agent/issue-9-r2" {
+		t.Fatalf("an existing attempt branch must be skipped: %+v", plan)
+	}
+	if plan.Branch != "agent/issue-9-r3" {
+		t.Fatalf("branch = %q, want agent/issue-9-r3", plan.Branch)
+	}
+}
+
 func TestMirrorAndConcurrentWorktrees(t *testing.T) {
 	origin, initialRevision, base := newOrigin(t)
 	manager, workspaceRoot := newManager(t, base)

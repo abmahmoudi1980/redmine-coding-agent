@@ -251,21 +251,21 @@ Single Go module at the repository root, with the SPA in `web/`:
 
 ### Tests for User Story 5
 
-- [ ] T107 [P] [US5] Write `internal/runner/recover_test.go`: the startup sweep marks every non-terminal run `interrupted` with `interrupted_stage`, leaves terminal runs untouched, and never triggers publish/report
-- [ ] T108 [P] [US5] Write `internal/store/history_test.go`: cursor pagination is stable and gap-free, filters by state and issue work, and ordering is newest-first by `created_at`
-- [ ] T109 [P] [US5] Write `tests/integration/recovery_test.go`: hard-kill the orchestrator mid-implementation, restart, assert the interrupted record, then retry and assert `previous_run_id`, a suffixed branch, and a distinct workspace (SC-007, FR-052)
-- [ ] T110 [P] [US5] Write `tests/integration/double_start_test.go`: a second start for an active issue returns `409` with the blocking run id and stage, and exactly one workspace + one agent process exist (SC-008)
+- [X] T107 [P] [US5] Write `internal/runner/recover_test.go`: the startup sweep marks every non-terminal run `interrupted` with `interrupted_stage`, leaves terminal runs untouched, and never triggers publish/report
+- [X] T108 [P] [US5] Write `internal/store/history_test.go`: cursor pagination is stable and gap-free, filters by state and issue work, and ordering is newest-first by `created_at`
+- [X] T109 [P] [US5] Write `tests/integration/recovery_test.go`: hard-kill the orchestrator mid-implementation, restart, assert the interrupted record, then retry and assert `previous_run_id`, a suffixed branch, and a distinct workspace (SC-007, FR-052)
+- [X] T110 [P] [US5] Write `tests/integration/double_start_test.go`: a second start for an active issue returns `409` with the blocking run id and stage, and exactly one workspace + one agent process exist (SC-008)
 
 ### Implementation for User Story 5
 
-- [ ] T111 [US5] Implement `internal/runner/recover.go`: on `serve` startup, inside one transaction, move every non-terminal run to `interrupted`, persist `interrupted_stage`, append a terminal `run_events` row, and log a summary; wire it before the listener accepts traffic (FR-051)
-- [ ] T112 [US5] Implement `GET /api/runs` in `internal/api/runs.go` with `state`, `issueId`, `limit`, and opaque `cursor` returning `RunPage` (FR-049)
-- [ ] T113 [US5] Implement `POST /api/runs/{runId}/retry` in `internal/api/runs.go`: refuse while the previous run is active (`409`), otherwise create a linked run; choose `-r<n>` branch suffix when the prior branch exists remotely or was pushed (FR-052, R18)
-- [ ] T114 [US5] Implement branch-supersession logic in `internal/git/repo.go`: detect an existing remote/local branch, reuse it only when the prior attempt was unpushed with the same base revision, and never force-push
-- [ ] T115 [US5] Implement `POST /api/runs` active-run rejection detail: return `activeRun{runId, stage, state}` in the problem body so the UI can link straight to the blocker (FR-010)
-- [ ] T116 [P] [US5] Implement `web/src/routes/runs/+page.svelte`: history table with state badges, issue filter, cursor pagination, and "retry" on terminal failed/blocked/interrupted rows
-- [ ] T117 [US5] Add retry lineage to `web/src/routes/runs/[id]/+page.svelte`: previous-attempt link, attempt number, and a banner distinguishing a retry from the original
-- [ ] T118 [US5] Implement stage-level failure guidance in `internal/runner/runner.go`: every `domain.Failure` carries `stage` and `remediation`, rendered in the run view so a failed run is diagnosable without logs (SC-011)
+- [X] T111 [US5] Implement `internal/runner/recover.go`: on `serve` startup, inside one transaction, move every non-terminal run to `interrupted`, persist `interrupted_stage`, append a terminal `run_events` row, and log a summary; wire it before the listener accepts traffic (FR-051)
+- [X] T112 [US5] Implement `GET /api/runs` in `internal/api/runs.go` with `state`, `issueId`, `limit`, and opaque `cursor` returning `RunPage` (FR-049)
+- [X] T113 [US5] Implement `POST /api/runs/{runId}/retry` in `internal/api/runs.go`: refuse while the previous run is active (`409`), otherwise create a linked run; choose `-r<n>` branch suffix when the prior branch exists remotely or was pushed (FR-052, R18)
+- [X] T114 [US5] Implement branch-supersession logic in `internal/git/repo.go`: detect an existing remote/local branch, reuse it only when the prior attempt was unpushed with the same base revision, and never force-push
+- [X] T115 [US5] Implement `POST /api/runs` active-run rejection detail: return `activeRun{runId, stage, state}` in the problem body so the UI can link straight to the blocker (FR-010)
+- [X] T116 [P] [US5] Implement `web/src/routes/runs/+page.svelte`: history table with state badges, issue filter, cursor pagination, and "retry" on terminal failed/blocked/interrupted rows
+- [X] T117 [US5] Add retry lineage to `web/src/routes/runs/[id]/+page.svelte`: previous-attempt link, attempt number, and a banner distinguishing a retry from the original
+- [X] T118 [US5] Implement stage-level failure guidance in `internal/runner/runner.go`: every `domain.Failure` carries `stage` and `remediation`, rendered in the run view so a failed run is diagnosable without logs (SC-011)
 
 **Checkpoint**: The tool survives its first bad day without becoming untrustworthy.
 

@@ -27,9 +27,7 @@ func run(args []string) error {
 
 	switch args[0] {
 	case "serve":
-		fmt.Fprintf(os.Stdout, "redmine-agent %s\n", buildVersion())
-		fmt.Fprintf(os.Stdout, "serve: stub listener not implemented yet\n")
-		return nil
+		return runServe(args[1:])
 	case "version":
 		fmt.Fprintln(os.Stdout, buildVersion())
 		return nil

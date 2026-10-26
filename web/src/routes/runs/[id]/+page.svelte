@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import {
 		ApiError,
 		cancelRun,
 		getRun,
+		retryRun,
 		type Problem,
 		type Run,
 		type RunDetail
@@ -35,6 +37,8 @@
 	let confirmCancel = $state(false);
 	let cancelling = $state(false);
 	let cancelProblem = $state<Problem | null>(null);
+	let retrying = $state(false);
+	let retryProblem = $state<Problem | null>(null);
 	let now = $state(Date.now());
 
 	let teardown: (() => void) | null = null;
@@ -243,6 +247,34 @@
 		} finally {
 			cancelling = false;
 		}
+	}
+
+	async function retry(id: string) {
+		retrying = true;
+		retryProblem = null;
+		try {
+			const created = await retryRun(id);
+			await goto(resolve('/runs/[id]', { id: created.runId }));
+		} catch (error) {
+			retryProblem =
+				error instanceof ApiError
+					? error.problem
+					: {
+							type: 'about:blank',
+							title: 'Retry failed',
+							status: 0,
+							code: 'unexpected',
+							detail: 'The worker did not start a new attempt.'
+						};
+			retrying = false;
+		}
+	}
+
+	function canRetry(detail: RunDetail): boolean {
+		return (
+			isTerminalState(detail.state) &&
+			['failed', 'blocked', 'interrupted', 'cancelled'].includes(detail.state)
+		);
 	}
 
 	function mergeRun(current: RunDetail | null, update: Run): RunDetail | null {
@@ -486,10 +518,55 @@
 			</div>
 		{/if}
 
+		{#if run.previousRunId || (run.attemptNo ?? 1) > 1}
+			<div class="lineage" data-testid="retry-lineage">
+				<h2>Attempt {run.attemptNo ?? 2}</h2>
+				<p>
+					This run is a retry.
+					{#if run.previousRunId}
+						It is linked to
+						<a href={resolve('/runs/[id]', { id: run.previousRunId })}>
+							attempt {Math.max(1, (run.attemptNo ?? 2) - 1)}
+						</a>, which is preserved exactly as it ended.
+					{/if}
+					The earlier attempt was never resumed and its branch was never force-pushed.
+				</p>
+			</div>
+		{/if}
+
 		{#if run.failureCode}
 			<div class="banner" data-testid="failure-banner">
 				<h2>{run.failureCode.replaceAll('_', ' ')}</h2>
 				<p>{run.failureMessage || 'The run did not finish successfully.'}</p>
+				{#if run.failureStage}
+					<p class="meta" data-testid="failure-stage">
+						Stopped at stage <code>{run.failureStage}</code>.
+					</p>
+				{/if}
+				{#if run.failureRemediation}
+					<p class="remediation" data-testid="failure-remediation">
+						What to do next: {run.failureRemediation}
+					</p>
+				{/if}
+			</div>
+		{/if}
+
+		{#if canRetry(run)}
+			<div class="retry-box">
+				<button
+					type="button"
+					class="primary"
+					data-testid="retry-button"
+					disabled={retrying}
+					onclick={() => retry(runId)}
+				>
+					{retrying ? 'Starting a new attempt…' : 'Retry this issue'}
+				</button>
+				{#if retryProblem}
+					<p class="cancel-error" role="alert" data-testid="retry-error">
+						{retryProblem.title}: {retryProblem.detail}
+					</p>
+				{/if}
 			</div>
 		{/if}
 
@@ -527,6 +604,28 @@
 				<dt>Repository</dt>
 				<dd>{run.repository?.path ?? '—'}</dd>
 			</div>
+			<div>
+				<dt>Attempt</dt>
+				<dd data-testid="attempt-number">{run.attemptNo ?? 1}</dd>
+			</div>
+			<div>
+				<dt>Previous attempt</dt>
+				<dd>
+					{#if run.previousRunId}
+						<a href={resolve('/runs/[id]', { id: run.previousRunId })}>
+							<code>{run.previousRunId.slice(0, 8)}</code>
+						</a>
+					{:else}
+						<span class="muted">none</span>
+					{/if}
+				</dd>
+			</div>
+			{#if run.interruptedStage}
+				<div>
+					<dt>Interrupted at</dt>
+					<dd><code>{run.interruptedStage}</code></dd>
+				</div>
+			{/if}
 			<div>
 				<dt>Branch</dt>
 				<dd><code>{run.branch || '—'}</code></dd>
@@ -906,6 +1005,51 @@
 	.banner p {
 		margin: 0;
 		color: #5d1a15;
+	}
+
+	.banner .meta {
+		margin-top: 0.35rem;
+		font-size: 0.85rem;
+		color: #6b3a34;
+	}
+
+	.banner .remediation {
+		margin-top: 0.45rem;
+		padding: 0.45rem 0.6rem;
+		border-radius: 0.35rem;
+		background: #fff;
+		color: #33475c;
+		font-size: 0.88rem;
+	}
+
+	.lineage {
+		border: 1px solid #cfd9e6;
+		background: #f3f7fc;
+		border-radius: 0.5rem;
+		padding: 0.75rem 1rem;
+	}
+
+	.lineage h2 {
+		color: #10233f;
+	}
+
+	.lineage p {
+		margin: 0;
+		color: #33475c;
+		font-size: 0.88rem;
+	}
+
+	.retry-box {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	button.primary {
+		background: #10233f;
+		border-color: #10233f;
+		color: #fff;
+		align-self: flex-start;
 	}
 
 	.facts {

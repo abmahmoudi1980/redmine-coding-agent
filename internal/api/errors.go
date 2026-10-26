@@ -98,6 +98,12 @@ func TitleFor(code string) string {
 		return "Logs were pruned"
 	case "invalid_tail":
 		return "Invalid log tail size"
+	case "invalid_state":
+		return "Invalid run state"
+	case "invalid_limit":
+		return "Invalid page size"
+	case "invalid_cursor":
+		return "Invalid cursor"
 	case "streaming_unsupported":
 		return "Streaming unsupported"
 	case "connectivity_redmine":

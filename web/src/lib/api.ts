@@ -8,6 +8,7 @@ export type Problem = components['schemas']['Problem'];
 export type HealthReport = components['schemas']['HealthReport'];
 export type Run = components['schemas']['Run'];
 export type RunDetail = components['schemas']['RunDetail'];
+export type RunPage = components['schemas']['RunPage'];
 export type ValidationResult = components['schemas']['ValidationResult'];
 export type RunEvent = components['schemas']['RunEvent'];
 export type AgentInvocation = components['schemas']['AgentInvocation'];
@@ -128,6 +129,35 @@ export function createRun(input: {
 /** getRun returns the full audit view of one run. */
 export function getRun(runId: string): Promise<RunDetail> {
 	return request<RunDetail>(`/api/runs/${encodeURIComponent(runId)}`);
+}
+
+/** listRuns returns one newest-first page of durable run history (FR-049). */
+export function listRuns(params: {
+	state?: string;
+	issueId?: number;
+	limit?: number;
+	cursor?: string;
+} = {}): Promise<RunPage> {
+	const query = new URLSearchParams();
+	if (params.state) {
+		query.set('state', params.state);
+	}
+	if (params.issueId) {
+		query.set('issueId', String(params.issueId));
+	}
+	if (params.limit) {
+		query.set('limit', String(params.limit));
+	}
+	if (params.cursor) {
+		query.set('cursor', params.cursor);
+	}
+	const suffix = query.toString();
+	return request<RunPage>(`/api/runs${suffix ? `?${suffix}` : ''}`);
+}
+
+/** retryRun starts a new attempt linked to a finished run (FR-052). */
+export function retryRun(runId: string): Promise<Run> {
+	return request<Run>(`/api/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST' });
 }
 
 /** getRunReport returns the stored report, or null when none exists yet (FR-047). */

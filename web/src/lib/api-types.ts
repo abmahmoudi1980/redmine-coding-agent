@@ -456,6 +456,8 @@ export interface components {
             issueSubject?: string;
             /** Format: uuid */
             previousRunId?: string | null;
+            /** @description 1 for the original attempt; increases along the retry chain (FR-052). */
+            attemptNo?: number;
             state: components["schemas"]["RunState"];
             stage: string;
             terminal?: boolean;
@@ -482,8 +484,14 @@ export interface components {
             elapsedMs?: number;
             /** Format: date-time */
             cancelRequestedAt?: string | null;
+            /** @description The stage the run had reached when startup recovery interrupted it (FR-051). */
+            interruptedStage?: string;
             failureCode?: components["schemas"]["FailureCode"];
             failureMessage?: string;
+            /** @description The stage at which the run failed, rendered so a failure is diagnosable without logs (SC-011). */
+            failureStage?: string;
+            /** @description Actionable next step for the failure code (FR-017). */
+            failureRemediation?: string;
             summary?: string;
         };
         RunDetail: components["schemas"]["Run"] & {
