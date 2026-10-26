@@ -32,7 +32,12 @@ config.yaml
 config.local.yaml
 .env
 .env.*
-.opencode/
+# Local agent configuration stays untracked, but share the Spec Kit commands
+# installed by `specify integration upgrade` so clones keep slash commands.
+.opencode/*
+!.opencode/commands/
+.opencode/commands/*
+!.opencode/commands/speckit.*.md
 *.pem
 *.key
 

@@ -6,7 +6,7 @@
   ],
   "integration_settings": {
     "opencode": {
-      "script": "ps",
+      "script": "sh",
       "invoke_separator": "."
     }
   },
