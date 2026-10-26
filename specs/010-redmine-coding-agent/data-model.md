@@ -30,7 +30,7 @@ runs n───1 configuration_profiles   (effective non-secret config snapshot)
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | INTEGER | PK | internal |
-| `redmine_project` | TEXT | NOT NULL | Redmine project **identifier** (slug), not the numeric id |
+| `redmine_project` | TEXT | NOT NULL, may be empty | Optional legacy scoping by Redmine project **identifier** (slug), not the numeric id. Empty means the mapping is selected by `repository_path` in the web panel. |
 | `repository_path` | TEXT | NOT NULL | GitLab path with namespace, e.g. `group/sub/project` (URL-encoded when called) |
 | `display_name` | TEXT | | shown in the picker |
 | `base_branch` | TEXT | NOT NULL | never inferred from the repo default (spec Assumptions) |
@@ -40,7 +40,7 @@ runs n───1 configuration_profiles   (effective non-secret config snapshot)
 | `enabled` | INTEGER | NOT NULL DEFAULT 1 | disable without deleting history |
 | `created_at` / `updated_at` | TEXT | NOT NULL | |
 
-**Rules**: `base_branch` must be non-empty. A project may map to many repositories, but at most one may be `is_default = 1` per project → `CREATE UNIQUE INDEX ux_repo_default ON repositories(redmine_project) WHERE is_default = 1;`. Resolution: default if exactly one candidate or a default exists; otherwise the run is **blocked** with the candidate list (FR-014, FR-015) — never guessed.
+**Rules**: `base_branch` must be non-empty. The operator selects the destination by its `repository_path` (source-code path) in the web panel; an explicit `repository_id` is equivalent. When several enabled mappings share a path, the issue's project and then `is_default` break the tie, otherwise the run is **blocked** with the candidate list (FR-014, FR-015) — never guessed. For legacy project-scoped configurations, at most one repository may be `is_default = 1` per project → `CREATE UNIQUE INDEX ux_repo_default ON repositories(redmine_project) WHERE is_default = 1;`.
 
 **Source of truth**: this table is seeded from `config.yaml` at startup (upsert by `redmine_project` + `repository_path`); configuration remains the operator's interface (FR-055), the table exists so history survives config edits and runs can reference a stable `repository_id`.
 

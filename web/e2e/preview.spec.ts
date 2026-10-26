@@ -104,6 +104,9 @@ const runDetailBody = {
 };
 
 test.beforeEach(async ({ page }) => {
+	await page.route('**/api/repositories*', (route) =>
+		route.fulfill({ status: 200, json: { items: [] } })
+	);
 	await page.route('**/api/issues/4821/preview*', (route) =>
 		route.fulfill({ status: 200, json: previewBody })
 	);
@@ -148,6 +151,24 @@ test('previews an issue and declines back to an empty input', async ({ page }) =
 	await expect(repositoryCard).toHaveCount(0);
 	await expect(input).toHaveValue('');
 	await expect(input).toBeFocused();
+});
+
+test('sends the source-code path with the preview', async ({ page }) => {
+	await page.goto('/');
+
+	await page.getByLabel('Issue number').fill('4821');
+	await page.getByLabel('Source code path').fill('/srv/repos/billing');
+
+	const previewRequest = page.waitForRequest(
+		(request) =>
+			request.url().includes('/api/issues/4821/preview') &&
+			request.url().includes('repositoryPath=')
+	);
+	await page.getByRole('button', { name: 'Preview issue' }).click();
+
+	const url = new URL((await previewRequest).url());
+	expect(url.searchParams.get('repositoryPath')).toBe('/srv/repos/billing');
+	await expect(page.getByTestId('issue-card')).toBeVisible();
 });
 
 test('confirms a run and shows the verified result', async ({ page }) => {

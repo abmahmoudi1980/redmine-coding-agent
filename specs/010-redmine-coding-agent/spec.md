@@ -107,7 +107,7 @@ A run fails because the VPN dropped, or the orchestrator is restarted mid-run. L
 
 ### User Story 6 - Configure repositories, agents, and policies without code changes (Priority: P3)
 
-An administrator registers which Redmine project belongs to which repository, the base branch, the checks that are mandatory, the coding agent and model to use, timeouts, and whether merge requests and Redmine comments are produced. Secrets are supplied outside the codebase. Changing any of this never requires a deployment.
+An administrator registers the available source-code paths and their base branches, the checks that are mandatory, the coding agent and model to use, timeouts, and whether merge requests and Redmine comments are produced. Repositories no longer need to be tied to a Redmine project: the operator enters the source-code path in the web panel and the issue's project is fetched from Redmine using the issue number. Secrets are supplied outside the codebase. Changing any of this never requires a deployment.
 
 **Why this priority**: The tool must be operable by an administrator, and every other story depends on configuration existing — but a minimal, single-repository setup is enough to prove the product, so configurability can start narrow and grow.
 
@@ -139,7 +139,7 @@ An administrator registers which Redmine project belongs to which repository, th
 - Redmine is unreachable when posting the final report: the work is not undone, and the report failure is recorded with enough content to post later.
 - The orchestrator restarts while the agent is running: the run is marked interrupted rather than completed, and its child process is not left orphaned.
 - The same issue is retried while the previous attempt's branch still exists remotely: the existing branch is reused or superseded explicitly, never silently overwritten in a way that loses the prior attempt.
-- Configuration is missing for the issue's project: the run is blocked with an explicit "no repository mapping" message, and nothing is guessed.
+- No repository is configured for the entered source-code path: the run is blocked with an explicit "no repository mapping" message, and nothing is guessed.
 
 ## Requirements *(mandatory)*
 
@@ -166,8 +166,8 @@ An administrator registers which Redmine project belongs to which repository, th
 
 **Repository resolution and connectivity**
 
-- **FR-014**: The tool MUST resolve the target repository only from explicit configuration that maps a Redmine project to a repository; it MUST NOT infer or guess a repository.
-- **FR-015**: When a project maps to more than one repository, the tool MUST require an explicit configured selection or operator choice, and MUST block the run when the destination is ambiguous.
+- **FR-014**: The tool MUST resolve the target repository only from explicit configuration, selected by the source-code path the operator enters (or an explicit repository choice) in the web panel. A Redmine project mapping MAY remain as a fallback for existing configurations, but the tool MUST NOT infer or guess a repository from the issue text.
+- **FR-015**: When several repositories match and no explicit selection or default is configured, the tool MUST list the candidates and block the run until the operator chooses one.
 - **FR-016**: Before implementation, the tool MUST verify that the Redmine service is reachable with the configured credential, that GitLab is reachable through the required network path, that the target repository can be fetched with the configured credential, and that the configured coding agent is available.
 - **FR-017**: When any connectivity or permission check fails, the tool MUST stop before modifying any repository and MUST name the failing system, the stage, and an actionable next step.
 
@@ -239,7 +239,7 @@ An administrator registers which Redmine project belongs to which repository, th
 
 - **Run**: One attempt to implement one issue. Holds the run identifier, issue reference, stage and terminal state, timestamps, agent configuration used, workspace and branch, validation results, commit and merge request references, failure details, and a link to the previous attempt when it is a retry.
 - **Issue Snapshot**: The task as retrieved at a point in time — identifier, subject, description, acceptance criteria, project, status, tracker, priority, assignee, parent and related issues, custom fields, selected comments, and attachment references. Recorded with the run so later issue edits do not rewrite history.
-- **Repository Mapping**: A configured association between a Redmine project and a repository, together with its base branch, optional per-project repository selection, validation commands, and publishing policy.
+- **Repository Mapping**: A configured repository identified by its source-code path, together with its base branch, optional legacy Redmine project scope, validation commands, and publishing policy.
 - **Workspace**: The isolated working copy created for a run, including its branch, starting revision, whether it was cleaned up, and whether unpushed changes remain.
 - **Validation Result**: One configured check within a run — command, outcome (passed, failed, not executed), exit code, duration, and output summary — plus whether it was required.
 - **Agent Invocation**: One execution of the coding agent for a run, including the adapter, model, configuration identifier, start and end times, exit status, and transcript reference. Repair attempts are separate invocations under the same run.
@@ -261,7 +261,7 @@ An administrator registers which Redmine project belongs to which repository, th
 - **SC-009**: Cancellation ends the coding agent within 30 seconds and leaves nothing pushed, in 100% of cancellations.
 - **SC-010**: 100% of created merge requests contain the issue reference, change summary, notable files, validation results, and limitations/follow-up sections.
 - **SC-011**: An operator can determine, from the run view alone, which stage failed and what to do next, for 100% of failed runs, without reading raw logs.
-- **SC-012**: An administrator can add a new project-to-repository mapping and validation command through configuration only and see it take effect on the next run, with no code change or rebuild.
+- **SC-012**: An administrator can add a new source-code path, base branch, and validation command through configuration only and see it take effect on the next run, with no code change or rebuild.
 - **SC-013**: No credential value appears in any log, report, or agent prompt across an audit of completed runs.
 - **SC-014**: For a reachable issue on a healthy network, an operator can go from issue number to a reviewed merge request with no manual repository, branch, or command entry.
 
@@ -269,7 +269,7 @@ An administrator registers which Redmine project belongs to which repository, th
 
 - The initial audience is a small internal team of trusted operators; the tool is deployed on an internal network or behind network-level access control, so per-user login is deferred and not part of the initial release.
 - The required VPN path to GitLab is established and maintained by the host or container environment; the tool verifies reachability and fails clearly when it is absent, but does not manage the tunnel's lifecycle.
-- In the common case a Redmine project maps to exactly one repository; multi-repository projects are supported through explicit configuration and an explicit choice, never by inference.
+- The operator normally chooses the repository by source-code path; multi-repository setups are supported through explicit configuration and an explicit choice, never by inference. Legacy project-scoped mappings continue to work.
 - Each repository has a configured base branch; a repository without a configured base branch is a configuration error, not something to guess from the repository's default.
 - Repositories are accessed over HTTPS or SSH with a credential restricted to the repositories the tool needs, and that credential is read/write only where publishing is enabled.
 - The coding agent is available on the worker host and already authorized for its model provider; its credentials are separate from the GitLab and Redmine credentials.

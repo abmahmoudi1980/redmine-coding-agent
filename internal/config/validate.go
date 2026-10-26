@@ -143,11 +143,12 @@ func (c *Config) validateRepositories() []error {
 
 	for i, repo := range c.Repositories {
 		prefix := fmt.Sprintf("repositories[%d]", i)
+		// redmine_project is optional: the operator selects the repository by
+		// source-code path in the web panel, and the issue's project is fetched
+		// from Redmine using the issue id. Project-scoped mappings remain
+		// supported as a fallback for existing configuration files.
 		project := strings.TrimSpace(repo.RedmineProject)
 		path := strings.TrimSpace(repo.RepositoryPath)
-		if project == "" {
-			problems = append(problems, fmt.Errorf("%s.redmine_project is required", prefix))
-		}
 		if path == "" {
 			problems = append(problems, fmt.Errorf("%s.repository_path is required", prefix))
 		}

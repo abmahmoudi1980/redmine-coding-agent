@@ -137,13 +137,16 @@ func New(opts Options) (*Runner, error) {
 	}, nil
 }
 
-// CreateRequest is one confirmed start.
+// CreateRequest is one confirmed start. RepositoryPath is the source-code path
+// the operator entered in the panel; RepositoryID is set when they picked an
+// entry from the configured list.
 type CreateRequest struct {
-	IssueID      int
-	RepositoryID int64
-	Confirm      bool
-	CommentIDs   []int
-	RequestedBy  string
+	IssueID        int
+	RepositoryID   int64
+	RepositoryPath string
+	Confirm        bool
+	CommentIDs     []int
+	RequestedBy    string
 }
 
 // Create validates, reserves a concurrency slot, persists the snapshot and run,
@@ -185,7 +188,11 @@ func (r *Runner) create(ctx context.Context, req CreateRequest, opts createOptio
 	snapshot := BuildSnapshot(issue, time.Now().UTC())
 	snapshot.SelectedComments = filterComments(snapshot.SelectedComments, req.CommentIDs)
 
-	mapping, err := Resolve(ctx, r.store, issue.Project.Identifier, req.RepositoryID)
+	mapping, err := ResolveSelection(ctx, r.store, Selection{
+		Project:        issue.Project.Identifier,
+		RepositoryID:   req.RepositoryID,
+		RepositoryPath: req.RepositoryPath,
+	})
 	if err != nil {
 		return nil, FailureForResolve(err)
 	}

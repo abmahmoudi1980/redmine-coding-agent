@@ -200,8 +200,11 @@ func TestExampleConfigDecodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("example config must strictly decode: %v", err)
 	}
-	if len(cfg.Repositories) != 1 || cfg.Repositories[0].RedmineProject != "billing" {
+	if len(cfg.Repositories) != 1 || cfg.Repositories[0].RepositoryPath != "group/billing-api" {
 		t.Fatalf("unexpected repositories: %+v", cfg.Repositories)
+	}
+	if cfg.Repositories[0].RedmineProject != "" {
+		t.Fatalf("redmine_project must be optional: %+v", cfg.Repositories[0])
 	}
 	if cfg.Agent.Command != "opencode" {
 		t.Fatalf("default agent command = %q", cfg.Agent.Command)
@@ -218,6 +221,15 @@ func TestRedactedDocumentKeepsReferencesOnly(t *testing.T) {
 	}
 	if redmine["apiKey"] != "env:REDMINE_TEST_KEY" {
 		t.Fatalf("apiKey = %v", redmine["apiKey"])
+	}
+}
+
+func TestRepositoryDoesNotRequireRedmineProject(t *testing.T) {
+	cfg := decodeValid(t)
+	cfg.Repositories[0].RedmineProject = ""
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("redmine_project must be optional: %v", err)
 	}
 }
 

@@ -103,15 +103,23 @@ paths:
       summary: Retrieve an issue and resolve its repository without creating a run
       description: |
         Implements US1. Performs no workspace, git, or agent action. Returns the issue snapshot,
-        the resolved repository, and the base branch. When the project maps to more than one
-        repository and no default is configured, returns `409 repository_ambiguous` with the
-        candidate list — the caller must resubmit with `repositoryId`.
+        the resolved repository, and the base branch. The operator normally supplies the
+        source-code path shown in the web panel; the issue's Redmine project is fetched from
+        Redmine using the issue id and is only a legacy fallback for resolution. When several
+        repositories match and no default is configured, returns `409 repository_ambiguous` with
+        the candidate list — the caller must resubmit with `repositoryId` or `repositoryPath`.
       parameters:
         - $ref: '#/components/parameters/IssueId'
         - name: repositoryId
           in: query
-          description: Explicit choice for a multi-repository project (FR-015).
+          description: Explicit configured repository choice (FR-015).
           schema: { type: integer, minimum: 1 }
+        - name: repositoryPath
+          in: query
+          description: |
+            Source-code path of the repository to use, exactly as configured in
+            `repositories[].repository_path`. No Redmine project id is required.
+          schema: { type: string, example: /srv/repos/billing }
       responses:
         '200':
           description: Issue retrieved and destination resolved.
@@ -151,6 +159,8 @@ paths:
                 value: { issueId: 4821, confirm: true }
               explicitRepository:
                 value: { issueId: 4821, repositoryId: 3, confirm: true }
+              explicitPath:
+                value: { issueId: 4821, repositoryPath: /srv/repos/billing, confirm: true }
       responses:
         '201':
           description: Run created and queued.
@@ -536,7 +546,10 @@ components:
       required: [repositoryId, path, baseBranch]
       properties:
         repositoryId: { type: integer }
-        path: { type: string, example: group/sub/project }
+        path:
+          type: string
+          description: The repository's configured source-code path (a GitLab project path or an absolute local directory).
+          example: /srv/repos/billing
         displayName: { type: string }
         baseBranch: { type: string }
         isDefault: { type: boolean }
@@ -547,7 +560,9 @@ components:
         - type: object
           required: [redmineProject, enabled, publishEnabled, mergeRequestEnabled, checks]
           properties:
-            redmineProject: { type: string }
+            redmineProject:
+              type: string
+              description: Optional legacy project scoping; empty when the mapping is selected by source-code path.
             enabled: { type: boolean }
             publishEnabled: { type: boolean }
             mergeRequestEnabled: { type: boolean }
@@ -641,6 +656,12 @@ components:
       properties:
         issueId: { type: integer, minimum: 1 }
         repositoryId: { type: integer, minimum: 1 }
+        repositoryPath:
+          type: string
+          description: |
+            Source-code path the operator selected in the panel. Required when no repository is
+            configured as the default and the issue's project does not map to exactly one entry.
+          example: /srv/repos/billing
         confirm:
           type: boolean
           const: true

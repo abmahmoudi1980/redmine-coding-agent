@@ -83,7 +83,8 @@ func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) 
 
 	items := make([]repositoryResponse, 0, len(mappings))
 	for _, mapping := range mappings {
-		if project != "" && mapping.RedmineProject != project {
+		// Project-less mappings apply to every issue and are always listed.
+		if project != "" && mapping.RedmineProject != "" && mapping.RedmineProject != project {
 			continue
 		}
 		items = append(items, repositoryFromMapping(mapping))
@@ -110,6 +111,7 @@ func (s *Server) handlePreviewIssue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	repositoryPath := strings.TrimSpace(r.URL.Query().Get("repositoryPath"))
 
 	if s.redmine == nil || s.store == nil {
 		s.writeProblem(w, http.StatusServiceUnavailable, "worker_not_ready", "The worker is not wired to Redmine and its database yet.")
@@ -128,7 +130,11 @@ func (s *Server) handlePreviewIssue(w http.ResponseWriter, r *http.Request) {
 	snapshot := runner.BuildSnapshot(issue, started)
 	warnings := previewWarnings(snapshot)
 
-	mapping, err := runner.Resolve(ctx, s.store, issue.Project.Identifier, explicitRepositoryID)
+	mapping, err := runner.ResolveSelection(ctx, s.store, runner.Selection{
+		Project:        issue.Project.Identifier,
+		RepositoryID:   explicitRepositoryID,
+		RepositoryPath: repositoryPath,
+	})
 	if err != nil {
 		problem := ProblemForFailure(runner.FailureForResolve(err))
 		var ambiguous *runner.AmbiguousMappingError

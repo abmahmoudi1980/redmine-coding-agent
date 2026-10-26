@@ -34,7 +34,8 @@ the embedded SPA are one binary.
 
 ```text
 preview (no side effects)
-  issue ──▶ repository + base branch from config     ← ambiguous ⇒ blocked, never guessed
+  issue ──▶ source-code path (web panel) + base branch from config
+    │         └── ambiguous/missing ⇒ blocked, never guessed
     │
     ▼  operator confirms
 queued ──▶ preparing ──▶ implementing ──▶ validating ──┬──▶ repairing ──▶ validating
@@ -106,7 +107,7 @@ If a build asks for `gcc`, a CGO-dependent package slipped in: that breaks the p
 | `redmine.base_url`, `redmine.api_key` | issue reads; `comment_on_finish` gates the report comment |
 | `gitlab.base_url`, `gitlab.token` | project lookup and merge requests; optional when every repository is a local path |
 | `gitlab.push_enabled` / `gitlab.merge_request_enabled` | global publishing policy |
-| `repositories[]` | `redmine_project` → `repository_path`, `base_branch`, `is_default`, optional `publish_enabled` / `merge_request_enabled`, and `checks[]`; `repository_path` is a GitLab project path **or** an absolute local directory |
+| `repositories[]` | `repository_path`, `base_branch`, `is_default`, optional `publish_enabled` / `merge_request_enabled`, and `checks[]`; `repository_path` is a GitLab project path **or** an absolute local directory. `redmine_project` is optional legacy scoping — the web panel selects the source-code path, and the issue's project is fetched from Redmine by issue id |
 | `repositories[].checks[]` | `name`, `command_linux`, `command_windows`, `required` (default true), `timeout_seconds` |
 | `agent` | `adapter`, `command`, `model`, `profile` (must name an installed agent — `opencode debug agents` lists them), `sandbox_home`, `env_passthrough`, `timeout_minutes`, `max_repairs` |
 | `concurrency.max_active_runs` | one active run by default |
@@ -126,8 +127,7 @@ without GitLab, so they are always skipped and the report says why.
 gitlab:
   push_enabled: true            # push the branch into the local repository
 repositories:
-  - redmine_project: "79"
-    repository_path: "/srv/repos/semnin"   # absolute => local, no GitLab
+  - repository_path: "/srv/repos/semnin"   # absolute => local, no GitLab
     base_branch: "main"
     checks: [...]
 ```

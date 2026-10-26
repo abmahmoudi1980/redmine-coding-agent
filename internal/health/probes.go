@@ -112,15 +112,20 @@ func redmineProbe(deps Deps) Probe {
 			}
 			mapping, mappingErr := firstMapping(ctx, deps.Store)
 			if mappingErr == nil {
-				project, err := deps.Redmine.GetProject(ctx, mapping.RedmineProject)
-				if err != nil {
-					return "", err
+				// A project-less mapping is legitimate now: the web panel
+				// selects the repository by source path, so there is no project
+				// identifier to look up. Fall back to a credential probe.
+				if strings.TrimSpace(mapping.RedmineProject) != "" {
+					project, err := deps.Redmine.GetProject(ctx, mapping.RedmineProject)
+					if err != nil {
+						return "", err
+					}
+					identifier := project.Identifier
+					if identifier == "" {
+						identifier = mapping.RedmineProject
+					}
+					return fmt.Sprintf("the credential read project %s", identifier), nil
 				}
-				identifier := project.Identifier
-				if identifier == "" {
-					identifier = mapping.RedmineProject
-				}
-				return fmt.Sprintf("the credential read project %s", identifier), nil
 			}
 			if !errors.Is(mappingErr, ErrNotConfigured) {
 				return "", mappingErr

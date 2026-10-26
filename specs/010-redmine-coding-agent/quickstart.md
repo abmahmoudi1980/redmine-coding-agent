@@ -72,8 +72,7 @@ gitlab:
   merge_request_enabled: true
 
 repositories:
-  - redmine_project: "billing"
-    repository_path: "group/billing-api"
+  - repository_path: "group/billing-api"   # selected in the web panel
     base_branch: "main"
     is_default: true
     checks:

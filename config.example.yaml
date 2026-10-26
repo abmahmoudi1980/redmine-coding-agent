@@ -21,17 +21,18 @@ gitlab:
   push_enabled: true
   merge_request_enabled: true
 
-# `repository_path` is either a GitLab project path ("group/project") or an
-# absolute directory on this machine ("/srv/repos/billing"). When every mapping
-# is a local directory the whole `gitlab` section may be omitted: the worker
-# clones from the path and never contacts a GitLab server. Set push_enabled to
-# have the dedicated branch pushed back into that local repository; merge
-# requests are always skipped for local paths.
+# `repository_path` is the repository's source-code path: either a GitLab
+# project path ("group/project") or an absolute directory on this machine
+# ("/srv/repos/billing"). The operator selects one of these paths in the web
+# panel, so `redmine_project` is not required and no Redmine project id has to
+# be configured. When every mapping is a local directory the whole `gitlab`
+# section may be omitted: the worker clones from the path and never contacts a
+# GitLab server. Set push_enabled to have the dedicated branch pushed back into
+# that local repository; merge requests are always skipped for local paths.
 repositories:
-  - redmine_project: "billing"
-    repository_path: "group/billing-api"
+  - repository_path: "group/billing-api"
     base_branch: "main"
-    is_default: true
+    is_default: true             # preselected in the web panel
     checks:
       - name: "unit-tests"
         command_linux: "go test ./..."

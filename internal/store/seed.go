@@ -88,8 +88,8 @@ func (s *Store) seedRepositories(ctx context.Context, cfg *config.Config) (SeedR
 		for index, repository := range cfg.Repositories {
 			project := strings.TrimSpace(repository.RedmineProject)
 			path := strings.TrimSpace(repository.RepositoryPath)
-			if project == "" || path == "" {
-				return fmt.Errorf("store: repositories[%d] is missing redmine_project or repository_path", index)
+			if path == "" {
+				return fmt.Errorf("store: repositories[%d] is missing repository_path", index)
 			}
 			if strings.TrimSpace(repository.BaseBranch) == "" {
 				return fmt.Errorf("store: repositories[%d] (%s) has no base_branch", index, path)

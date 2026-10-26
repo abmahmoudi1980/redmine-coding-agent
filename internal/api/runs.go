@@ -25,10 +25,11 @@ type RunService interface {
 }
 
 type createRunRequest struct {
-	IssueID      int   `json:"issueId"`
-	RepositoryID int64 `json:"repositoryId"`
-	Confirm      bool  `json:"confirm"`
-	CommentIDs   []int `json:"commentIds"`
+	IssueID        int    `json:"issueId"`
+	RepositoryID   int64  `json:"repositoryId"`
+	RepositoryPath string `json:"repositoryPath"`
+	Confirm        bool   `json:"confirm"`
+	CommentIDs     []int  `json:"commentIds"`
 }
 
 type runDocument struct {
@@ -123,7 +124,7 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
-		s.writeProblem(w, http.StatusBadRequest, "invalid_body", "The request body must be a JSON object with issueId, confirm, and optionally repositoryId.")
+		s.writeProblem(w, http.StatusBadRequest, "invalid_body", "The request body must be a JSON object with issueId, confirm, and optionally repositoryId or repositoryPath.")
 		return
 	}
 	if body.IssueID < 1 {
@@ -143,11 +144,12 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	created, err := s.runs.Create(ctx, runner.CreateRequest{
-		IssueID:      body.IssueID,
-		RepositoryID: body.RepositoryID,
-		Confirm:      body.Confirm,
-		CommentIDs:   body.CommentIDs,
-		RequestedBy:  strings.TrimSpace(r.Header.Get("X-Operator")),
+		IssueID:        body.IssueID,
+		RepositoryID:   body.RepositoryID,
+		RepositoryPath: strings.TrimSpace(body.RepositoryPath),
+		Confirm:        body.Confirm,
+		CommentIDs:     body.CommentIDs,
+		RequestedBy:    strings.TrimSpace(r.Header.Get("X-Operator")),
 	})
 	if err != nil {
 		s.writeRunError(w, err)

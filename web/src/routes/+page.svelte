@@ -1,22 +1,26 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import {
 		ApiError,
 		createRun,
+		listRepositories,
 		previewIssue,
 		type IssuePreview,
-		type Problem
+		type Problem,
+		type Repository
 	} from '$lib/api';
 	import IssueCard from '$lib/components/IssueCard.svelte';
 	import RepositoryPicker from '$lib/components/RepositoryPicker.svelte';
 
 	let rawIssueId = $state('');
+	let sourcePath = $state('');
 	let inputError = $state('');
 	let preview = $state<IssuePreview | null>(null);
 	let problem = $state<Problem | null>(null);
 	let candidates = $state<IssuePreview['candidates']>([]);
+	let repositories = $state<Repository[]>([]);
 	let selectedRepositoryId = $state<number | null>(null);
 	let loading = $state(false);
 	let starting = $state(false);
@@ -24,6 +28,23 @@
 
 	const confirmDisabled = $derived(preview === null || loading || starting);
 	const showRepository = $derived(preview !== null || (candidates?.length ?? 0) > 0);
+
+	onMount(async () => {
+		// Suggestions only: a failure here must not block the issue workflow.
+		try {
+			repositories = (await listRepositories()).filter((repository) => repository.enabled);
+			if (!sourcePath) {
+				const preferred =
+					repositories.find((repository) => repository.isDefault) ??
+					(repositories.length === 1 ? repositories[0] : undefined);
+				if (preferred) {
+					sourcePath = preferred.path;
+				}
+			}
+		} catch {
+			repositories = [];
+		}
+	});
 
 	function parseIssueId(value: string): number | null {
 		const trimmed = value.trim();
@@ -49,10 +70,14 @@
 		loading = true;
 		problem = null;
 		try {
-			const result = await previewIssue(issueId, repositoryId ?? selectedRepositoryId ?? undefined);
+			const result = await previewIssue(issueId, {
+				repositoryId: repositoryId ?? selectedRepositoryId ?? undefined,
+				repositoryPath: sourcePath.trim() || undefined
+			});
 			preview = result;
 			candidates = result.candidates ?? [];
 			selectedRepositoryId = result.repository.repositoryId;
+			sourcePath = result.repository.path;
 		} catch (error) {
 			preview = null;
 			selectedRepositoryId = null;
@@ -80,6 +105,10 @@
 	}
 
 	function chooseRepository(repositoryId: number) {
+		const chosen = candidates?.find((candidate) => candidate.repositoryId === repositoryId);
+		if (chosen) {
+			sourcePath = chosen.path;
+		}
 		selectedRepositoryId = repositoryId;
 		void fetchPreview(repositoryId);
 	}
@@ -95,6 +124,7 @@
 			const run = await createRun({
 				issueId,
 				repositoryId: selectedRepositoryId ?? preview.repository.repositoryId,
+				repositoryPath: sourcePath.trim() || preview.repository.path,
 				confirm: true
 			});
 			await goto(resolve('/runs/[id]', { id: run.runId }));
@@ -140,35 +170,61 @@
 <section class="panel">
 	<h1>Review a Redmine issue</h1>
 	<p class="lede">
-		Enter an issue number to see exactly what the worker found and where it would work. Nothing is
-		created until you confirm.
+		Enter an issue number and the repository's source-code path to see exactly what the worker found
+		and where it would work. The issue's project is read from Redmine, so no project id is needed.
+		Nothing is created until you confirm.
 	</p>
 
 	<form onsubmit={onSubmit} novalidate>
 		<label for="issue-number">Issue number</label>
-		<div class="input-row">
-			<input
-				id="issue-number"
-				bind:this={inputEl}
-				bind:value={rawIssueId}
-				inputmode="numeric"
-				autocomplete="off"
-				placeholder="4821"
-				aria-invalid={inputError !== ''}
-				aria-describedby={inputError !== '' ? 'issue-number-error' : undefined}
-			/>
+		<input
+			id="issue-number"
+			bind:this={inputEl}
+			bind:value={rawIssueId}
+			inputmode="numeric"
+			autocomplete="off"
+			placeholder="4821"
+			aria-invalid={inputError !== ''}
+			aria-describedby={inputError !== '' ? 'issue-number-error' : undefined}
+		/>
+		{#if inputError}
+			<p class="field-error" id="issue-number-error">{inputError}</p>
+		{/if}
+
+		<label for="source-path">Source code path</label>
+		<input
+			id="source-path"
+			bind:value={sourcePath}
+			list="repository-paths"
+			autocomplete="off"
+			placeholder="/srv/repos/billing or group/project"
+			oninput={() => {
+				// A typed path is a new selection; do not keep the previous id.
+				selectedRepositoryId = null;
+			}}
+		/>
+		<datalist id="repository-paths">
+			{#each repositories as repository (repository.repositoryId)}
+				<option value={repository.path}>{repository.displayName || repository.path}</option>
+			{/each}
+		</datalist>
+		<p class="hint">
+			Choose a configured repository or type its path. The issue's project is fetched from Redmine
+			using the issue number, so no project id is needed.
+		</p>
+
+		<div class="actions">
 			<button type="submit" disabled={loading}>
 				{loading ? 'Previewing…' : 'Preview issue'}
 			</button>
 		</div>
-		{#if inputError}
-			<p class="field-error" id="issue-number-error">{inputError}</p>
-		{/if}
 	</form>
 </section>
 
 {#if loading}
-	<p class="status" role="status" aria-live="polite">Retrieving the issue and resolving its repository…</p>
+	<p class="status" role="status" aria-live="polite">
+		Retrieving the issue and resolving its repository…
+	</p>
 {/if}
 
 {#if problem}
@@ -207,7 +263,7 @@
 	<RepositoryPicker
 		repository={preview?.repository ?? null}
 		candidates={candidates ?? []}
-		selectedRepositoryId={selectedRepositoryId}
+		{selectedRepositoryId}
 		busy={loading}
 		onselect={chooseRepository}
 	/>
@@ -215,18 +271,13 @@
 
 {#if preview || problem}
 	<section class="controls">
-		<button
-			type="button"
-			class="confirm"
-			disabled={confirmDisabled}
-			onclick={confirm}
-		>
+		<button type="button" class="confirm" disabled={confirmDisabled} onclick={confirm}>
 			{starting ? 'Starting…' : 'Confirm and start'}
 		</button>
 		<button type="button" class="decline" onclick={decline} disabled={starting}>Decline</button>
 		<p class="controls-note">
-			The worker creates a dedicated branch and workspace. Nothing is written to the base branch, and
-			nothing is merged. Declining leaves no run, workspace, or branch.
+			The worker creates a dedicated branch and workspace. Nothing is written to the base branch,
+			and nothing is merged. Declining leaves no run, workspace, or branch.
 		</p>
 	</section>
 {/if}
@@ -254,7 +305,21 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.35rem;
-		max-width: 28rem;
+		max-width: 44rem;
+	}
+
+	form label:not(:first-child) {
+		margin-top: 0.5rem;
+	}
+
+	.actions {
+		margin-top: 0.65rem;
+	}
+
+	.hint {
+		margin: 0.15rem 0 0;
+		color: #6b7a8c;
+		font-size: 0.82rem;
 	}
 
 	label {
@@ -263,11 +328,6 @@
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		color: #4a5868;
-	}
-
-	.input-row {
-		display: flex;
-		gap: 0.5rem;
 	}
 
 	input {

@@ -98,9 +98,9 @@ func DefaultRemediation(code FailureCode) string {
 	case FailIssueInputInvalid:
 		return "Enter a positive integer issue number."
 	case FailNoRepositoryMapping:
-		return "Add a repositories entry for the issue's Redmine project in config.yaml and restart."
+		return "Add the source-code path to repositories in config.yaml and restart, or enter a configured path in the panel."
 	case FailRepositoryAmbiguous:
-		return "Set is_default: true on one repository for this project, or choose a repository explicitly."
+		return "Set is_default: true on one repository, or choose a source-code path explicitly in the panel."
 	case FailConfigInvalid:
 		return "Run `redmine-agent doctor` to see which configuration key is invalid."
 	case FailConnectivityRedmine:

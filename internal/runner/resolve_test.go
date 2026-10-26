@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/systemgroup/redmine-coding-agent/internal/domain"
@@ -136,5 +137,72 @@ func TestResolveDoesNotInferFromRepositoryPath(t *testing.T) {
 	_, err := Resolve(context.Background(), source, "billing-api", 0)
 	if !errors.Is(err, ErrNoRepositoryMapping) {
 		t.Fatalf("error = %v, want ErrNoRepositoryMapping", err)
+	}
+}
+
+func TestResolveSelectionBySourcePath(t *testing.T) {
+	source := staticRepositories{
+		mapping(3, "", "/srv/repos/billing", false),
+		mapping(4, "", "/srv/repos/other", false),
+	}
+
+	resolved, err := ResolveSelection(context.Background(), source, Selection{RepositoryPath: "/srv/repos/billing"})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolved.ID != 3 {
+		t.Fatalf("resolved = %+v, want the path-selected mapping", resolved)
+	}
+}
+
+func TestResolveSelectionBySourcePathNeedsNoProject(t *testing.T) {
+	source := staticRepositories{mapping(3, "", "/srv/repos/billing", true)}
+
+	resolved, err := ResolveSelection(context.Background(), source, Selection{
+		Project:        "billing",
+		RepositoryPath: "/srv/repos/billing",
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolved.ID != 3 {
+		t.Fatalf("resolved = %+v", resolved)
+	}
+}
+
+func TestResolveSelectionUnknownSourcePath(t *testing.T) {
+	source := staticRepositories{mapping(3, "", "/srv/repos/billing", true)}
+
+	_, err := ResolveSelection(context.Background(), source, Selection{RepositoryPath: "/srv/repos/missing"})
+	if !errors.Is(err, ErrNoRepositoryMapping) {
+		t.Fatalf("error = %v, want ErrNoRepositoryMapping", err)
+	}
+	failure := FailureForResolve(err)
+	if failure.Code != domain.FailNoRepositoryMapping || !strings.Contains(failure.Message, "/srv/repos/missing") {
+		t.Fatalf("failure = %+v", failure)
+	}
+}
+
+func TestResolveProjectlessMappingAppliesToAnyIssue(t *testing.T) {
+	source := staticRepositories{mapping(3, "", "group/billing-api", true)}
+
+	resolved, err := Resolve(context.Background(), source, "billing", 0)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolved.ID != 3 {
+		t.Fatalf("resolved = %+v", resolved)
+	}
+}
+
+func TestResolveExplicitRepositoryIgnoresProject(t *testing.T) {
+	source := staticRepositories{mapping(3, "billing", "group/billing-api", false)}
+
+	resolved, err := Resolve(context.Background(), source, "another-project", 3)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolved.ID != 3 {
+		t.Fatalf("resolved = %+v", resolved)
 	}
 }

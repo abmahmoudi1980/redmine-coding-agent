@@ -96,10 +96,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 	return body as T;
 }
 
-/** previewIssue retrieves an issue and its destination without side effects. */
-export function previewIssue(issueId: number, repositoryId?: number): Promise<IssuePreview> {
-	const query = repositoryId ? `?repositoryId=${repositoryId}` : '';
-	return request<IssuePreview>(`/api/issues/${issueId}/preview${query}`);
+/**
+ * previewIssue retrieves an issue and its destination without side effects.
+ * The source-code path is the operator's explicit choice from the panel; the
+ * issue's Redmine project is only used as a legacy fallback.
+ */
+export function previewIssue(
+	issueId: number,
+	selection: { repositoryId?: number; repositoryPath?: string } = {}
+): Promise<IssuePreview> {
+	const query = new URLSearchParams();
+	if (selection.repositoryId) {
+		query.set('repositoryId', String(selection.repositoryId));
+	}
+	const path = selection.repositoryPath?.trim();
+	if (path) {
+		query.set('repositoryPath', path);
+	}
+	const suffix = query.toString();
+	return request<IssuePreview>(`/api/issues/${issueId}/preview${suffix ? `?${suffix}` : ''}`);
 }
 
 /** listRepositories returns the configured mappings, optionally for one project. */
@@ -128,6 +143,7 @@ export function getMeta(): Promise<Meta> {
 export function createRun(input: {
 	issueId: number;
 	repositoryId?: number;
+	repositoryPath?: string;
 	confirm: true;
 	commentIds?: number[];
 }): Promise<Run> {

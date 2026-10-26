@@ -183,6 +183,65 @@ func TestPreviewCreatesNoRunWorkspaceOrBranch(t *testing.T) {
 	}
 }
 
+func TestPreviewBySourcePathNeedsNoProjectMapping(t *testing.T) {
+	env := newPreviewEnvironment(t, []config.Repository{{
+		RepositoryPath: "group/billing-api",
+		DisplayName:    "Billing API",
+		BaseBranch:     "main",
+		IsDefault:      true,
+	}})
+
+	status, body := env.get(t, "/api/issues/4821/preview?repositoryPath=group%2Fbilling-api")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d: %s", status, body)
+	}
+	var preview struct {
+		Issue struct {
+			Project struct {
+				Identifier string `json:"identifier"`
+			} `json:"project"`
+		} `json:"issue"`
+		Repository struct {
+			RepositoryID int64  `json:"repositoryId"`
+			Path         string `json:"path"`
+		} `json:"repository"`
+	}
+	if err := json.Unmarshal(body, &preview); err != nil {
+		t.Fatalf("decode preview: %v", err)
+	}
+	// The issue project still comes from the issue id; it is not required in
+	// the repository configuration.
+	if preview.Issue.Project.Identifier != "billing" {
+		t.Fatalf("project = %+v", preview.Issue.Project)
+	}
+	if preview.Repository.Path != "group/billing-api" || preview.Repository.RepositoryID == 0 {
+		t.Fatalf("repository = %+v", preview.Repository)
+	}
+}
+
+func TestPreviewUnknownSourcePathIsRejected(t *testing.T) {
+	env := newPreviewEnvironment(t, []config.Repository{{
+		RepositoryPath: "group/billing-api",
+		BaseBranch:     "main",
+		IsDefault:      true,
+	}})
+
+	status, body := env.get(t, "/api/issues/4821/preview?repositoryPath=%2Fsrv%2Frepos%2Fmissing")
+	if status != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", status, body)
+	}
+	var problem struct {
+		Code   string `json:"code"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(body, &problem); err != nil {
+		t.Fatalf("decode problem: %v", err)
+	}
+	if problem.Code != "no_repository_mapping" || !strings.Contains(problem.Detail, "/srv/repos/missing") {
+		t.Fatalf("problem = %+v", problem)
+	}
+}
+
 func TestPreviewRejectsInvalidIssueNumberBeforeCallingRedmine(t *testing.T) {
 	h := New(t)
 	env := newPreviewEnvironment(t, h.Config.Repositories)

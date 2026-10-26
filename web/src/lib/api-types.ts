@@ -92,9 +92,11 @@ export interface paths {
         /**
          * Retrieve an issue and resolve its repository without creating a run
          * @description Implements US1. Performs no workspace, git, or agent action. Returns the issue snapshot,
-         *     the resolved repository, and the base branch. When the project maps to more than one
-         *     repository and no default is configured, returns `409 repository_ambiguous` with the
-         *     candidate list — the caller must resubmit with `repositoryId`.
+         *     the resolved repository, and the base branch. The operator normally supplies the
+         *     source-code path shown in the web panel; the issue's Redmine project is fetched from
+         *     Redmine using the issue id and is only a legacy fallback for resolution. When several
+         *     repositories match and no default is configured, returns `409 repository_ambiguous` with
+         *     the candidate list — the caller must resubmit with `repositoryId` or `repositoryPath`.
          */
         get: operations["previewIssue"];
         put?: never;
@@ -359,13 +361,17 @@ export interface components {
         };
         RepositoryOption: {
             repositoryId: number;
-            /** @example group/sub/project */
+            /**
+             * @description The repository's configured source-code path (a GitLab project path or an absolute local directory).
+             * @example /srv/repos/billing
+             */
             path: string;
             displayName?: string;
             baseBranch: string;
             isDefault?: boolean;
         };
         Repository: components["schemas"]["RepositoryOption"] & {
+            /** @description Optional legacy project scoping; empty when the mapping is selected by source-code path. */
             redmineProject: string;
             enabled: boolean;
             publishEnabled: boolean;
@@ -435,6 +441,12 @@ export interface components {
         CreateRunRequest: {
             issueId: number;
             repositoryId?: number;
+            /**
+             * @description Source-code path the operator selected in the panel. Required when no repository is
+             *     configured as the default and the issue's project does not map to exactly one entry.
+             * @example /srv/repos/billing
+             */
+            repositoryPath?: string;
             /**
              * @description Explicit confirmation of the displayed issue, repository, and base branch (FR-008).
              * @constant
@@ -769,8 +781,13 @@ export interface operations {
     previewIssue: {
         parameters: {
             query?: {
-                /** @description Explicit choice for a multi-repository project (FR-015). */
+                /** @description Explicit configured repository choice (FR-015). */
                 repositoryId?: number;
+                /**
+                 * @description Source-code path of the repository to use, exactly as configured in
+                 *     `repositories[].repository_path`. No Redmine project id is required.
+                 */
+                repositoryPath?: string;
             };
             header?: never;
             path: {
